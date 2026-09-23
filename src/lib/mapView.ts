@@ -23,7 +23,7 @@ import { formatDate } from './flock';
  */
 import { travelRuns, type TravelRun } from './timeline';
 /* the pen: the LCG, Catmull-Rom and every stroke built on them (./ink.ts) */
-import { rng, catmull, inkLoop, inkArrow, inkPoly, inkLine, type InkStroke } from './ink.ts';
+import { rng, catmull, inkTri, inkArrow, inkPoly, inkLine, type InkStroke } from './ink.ts';
 import { days as birdingDayList, dayByIso } from './days';
 import meta from '../data/map-meta.json';
 
@@ -320,13 +320,15 @@ const DODGE_ITER = 700;
 export {
   inkLoop,
   inkRing,
+  inkTri,
+  inkTriPath,
   inkArrow,
   inkPoly,
   inkLine,
   type InkStroke,
 } from './ink.ts';
 
-/** Radius of that ring, as a % of the map's width. */
+/** Radius the Triangle's mark is drawn to, as a % of the map's width. */
 export const HOME_RING_R = 3.1;
 
 /**
@@ -889,8 +891,6 @@ export interface RouteSegment {
   d: string;
   /** the leg's drawn length in viewBox units; summed into Route.length */
   len: number;
-  /** the open chevron at the later end; null on an undirected same-day leg */
-  head: string | null;
 }
 
 export interface Route {
@@ -933,7 +933,6 @@ const ROUTE_BOW_MAX = 30;
 const ROUTE_CLEAR = 2.5;
 const ROUTE_JITTER = 2.2; /* the hand, not the ruler */
 const ROUTE_STOP = 8; /* the line stops short of the tail tip at both ends */
-const ROUTE_HEAD = 5; /* the open chevron on a directed leg */
 const ROUTE_TENSION = 0.9;
 /*
  * There was a ROUTE_TRACE_MS here — 480 ms, split between the legs by
@@ -1031,22 +1030,6 @@ function routeLeg(
     pts,
     samples: catmullSamples(pts, ROUTE_TENSION),
   };
-}
-
-/** The two-stroke open head of `inkArrow`, at a fifth of its size. */
-function routeHead(samples: [number, number][]): string {
-  const end = samples[samples.length - 1];
-  const before = samples[Math.max(0, samples.length - 4)];
-  const a = Math.atan2(end[1] - before[1], end[0] - before[0]);
-  const wing = (sign: number) => {
-    const w = a + sign * 30 * (Math.PI / 180);
-    return (
-      `M ${(end[0] - Math.cos(w) * ROUTE_HEAD).toFixed(2)} ` +
-      `${(end[1] - Math.sin(w) * ROUTE_HEAD).toFixed(2)} ` +
-      `L ${end[0].toFixed(2)} ${end[1].toFixed(2)}`
-    );
-  };
-  return `${wing(1)} ${wing(-1)}`;
 }
 
 /* ---- what a route may not cross ---- */
@@ -1389,7 +1372,6 @@ function buildRoute(
       kind,
       d: leg.stroke.d,
       len: leg.stroke.length,
-      head: kind === 'days' ? routeHead(leg.samples) : null,
     });
   }
 
@@ -1925,9 +1907,9 @@ export const LEGEND_KEYS: LegendKey[] = (() => {
     },
     {
       id: 'inset',
-      label: 'circled, and the arrow goes to the box it is drawn larger in',
+      label: 'marked with its own shape, and the arrow goes to the box it is drawn larger in',
       ink: [
-        { d: inkLoop(12, 13, 7.5, 23, 1.3).d, role: 'stroke' },
+        { d: inkTri(12, 13, 8.5, 23).d, role: 'stroke' },
         { d: insetArrow.shaft, role: 'stroke' },
         { d: insetArrow.head, role: 'stroke' },
         {

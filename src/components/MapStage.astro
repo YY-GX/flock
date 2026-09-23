@@ -18,7 +18,7 @@ import {
   SPACES,
   homeMarker,
   homeInsetDots,
-  inkLoop,
+  inkTri,
   inkArrow,
   routes,
   heldRoutes,
@@ -99,7 +99,7 @@ const py = (v: number) => (v / 100) * def.height;
 const ringX = (homeMarker.x / 100) * def.width;
 const ringY = (homeMarker.y / 100) * def.height;
 const ringR = (HOME_RING_R / 100) * def.width;
-const ring = inkLoop(ringX, ringY, ringR);
+const ring = inkTri(ringX, ringY, ringR);
 const arrow = inkArrow(HOME_ARROW.x1, HOME_ARROW.y1, HOME_ARROW.x2, HOME_ARROW.y2);
 const box = {
   x: px(HOME_INSET.x),
@@ -402,9 +402,6 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
           {route.segments.map((seg) => (
             <path class="map__seg map__seg--trace" d={seg.d} />
           ))}
-          {route.segments.map((seg) =>
-            seg.head ? <path class="map__head" d={seg.head} /> : null,
-          )}
         </g>
       ))}
     </svg>
@@ -859,8 +856,7 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
    * in the north-east, where the line is half behind photographs, 1.3 of
    * soft ink was a whisper. At rest it stays soft and thin.
    */
-  .map__routes--over .map__seg--trace,
-  .map__routes--over .map__head {
+  .map__routes--over .map__seg--trace {
     stroke: var(--ink);
     stroke-width: 1.7;
   }
@@ -905,25 +901,6 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
     stroke: var(--paper);
     stroke-width: 4.2;
     opacity: 0.75;
-  }
-
-  .map__head {
-    fill: none;
-    stroke: var(--ink-soft);
-    stroke-width: 1.3;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
-    /* five arrowheads on the east coast at rest would be a diagram */
-    opacity: 0;
-    transition: opacity 120ms var(--ease);
-  }
-  /* The arrowhead used to wait 400 ms for the pen to reach it. There is no
-     pen to wait for; it arrives with the line it belongs to. */
-  .map__route.is-trip .map__head,
-  .map__route.is-held .map__head {
-    opacity: 1;
-    transition: opacity 140ms var(--ease);
   }
 
   /* the label is HTML, not SVG: it keeps its point size while the map

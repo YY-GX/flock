@@ -131,6 +131,74 @@ export function inkRing(cx: number, cy: number, r: number, seed = 23, turn = 1.7
 }
 
 /**
+ * The same circling gesture, but round a triangle — the mark for the one
+ * place on this map that is called The Triangle.
+ *
+ * Raleigh, Durham and Chapel Hill are a triangle on the ground and the
+ * region is named for it, so a ring round them was the one mark on these
+ * sheets that said less than the thing it pointed at. The owner asked for
+ * the shape, in both places it is drawn.
+ *
+ * It is `inkLoop`'s hand, not `inkPoly`'s: `inkPoly` draws a shape that was
+ * always going to be that shape (the compass needle, the scale box), and
+ * closes exactly. This is a pen going round something on a map — the corners
+ * carry the same 5% radius noise the loop has, the edges bow, and the stroke
+ * runs `over` past the corner it started from rather than meeting it, which
+ * is what stops it reading as printed. Overshoot rather than `turn`: three
+ * corners twice round is a scribble, not emphasis.
+ *
+ * Apex up, and `tilt` matches `inkLoop`'s -0.22 so the ring and the triangle
+ * lean the same way for the same reason — nobody draws a shape square to the
+ * page. The three corners are NOT the three cities: the pins for all
+ * eighteen local places collapse to one anchor at country scale (see
+ * flockView's PLACE_UV), so a triangle claiming to be the real geometry
+ * would be a claim the drawing cannot keep. It is a monogram.
+ */
+export function inkTri(cx: number, cy: number, r: number, seed = 23, over = 0.22): InkStroke {
+  const rnd = rng(seed);
+  const tilt = -0.22;
+  const per = 5; /* points along each edge, so the sides bow like the loop's */
+  /* apex up, then clockwise; y is down, hence -90 deg first */
+  const corner = (k: number): [number, number] => {
+    const a = -Math.PI / 2 + (k % 3) * ((Math.PI * 2) / 3);
+    const rr = r * (1 + (rnd() * 2 - 1) * 0.05);
+    const x = Math.cos(a) * rr;
+    const y = Math.sin(a) * rr * 0.9; /* the loop's squash, kept */
+    return [cx + x * Math.cos(tilt) - y * Math.sin(tilt), cy + x * Math.sin(tilt) + y * Math.cos(tilt)];
+  };
+  /* four corners, not three: the fourth is the first one again, drawn a
+     second time with its own noise, so the stroke arrives a hair off where
+     it set out — the loop's overshoot, in a shape that has corners */
+  const c = [corner(0), corner(1), corner(2), corner(0)];
+  const pts: [number, number][] = [];
+  for (let i = 0; i < 3; i++) {
+    const a = c[i];
+    const b = c[i + 1];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    for (let k = 0; k < per; k++) {
+      const t = k / per;
+      const w = k === 0 ? 0 : (rnd() * 2 - 1) * r * 0.035;
+      pts.push([a[0] + dx * t + nx * w, a[1] + dy * t + ny * w]);
+    }
+  }
+  pts.push(c[3]);
+  /* and on, a fifth of an edge past the start, the way a hand carries through */
+  const d0 = c[1][0] - c[3][0];
+  const d1 = c[1][1] - c[3][1];
+  pts.push([c[3][0] + d0 * over, c[3][1] + d1 * over]);
+  return catmull(pts, false, 0.6);
+}
+
+/** The triangle as plain path data, for callers that do not animate it. */
+export function inkTriPath(cx: number, cy: number, r: number, seed = 23): string {
+  return inkTri(cx, cy, r, seed).d;
+}
+
+/**
  * A pen leader with a slight bow and an open two-stroke head at the end —
  * the "enlarged over here" arrow of a paper map, drawn by the same hand as
  * the coastline. The head sits at (x2, y2) and points the way the shaft

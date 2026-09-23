@@ -27,7 +27,7 @@ import BirdPanel from '../components/BirdPanel.astro';
 import usSvg from '../assets/map/us.svg?raw';
 import { birds, locations, photosById } from '../lib/data';
 import { TYPE_ORDER, canonicalType, typeKey, splitName, typeLabel } from '../lib/flock';
-import { inkRing } from '../lib/mapView';
+import { inkTriPath } from '../lib/mapView';
 import type { Bird } from '../lib/types';
 import { withBase } from '../lib/paths';
 
@@ -61,6 +61,49 @@ for (const type of TYPE_ORDER) {
     n++;
   }
 }
+/* Then one bird for every travel pin that would otherwise stand empty.
+ *
+ * "Where" sends each bird to ONE place — `locationIds[0]`, which is what
+ * flockView's `placeOnRecord` reads off the panel payload (the relation is
+ * an unordered set, so position 0 is arbitrary but stable). A bird that has
+ * been to Oregon is therefore not a bird that FLIES to Oregon: if Oregon is
+ * third on its record, the map never hears about it.
+ *
+ * Chosen on photographs alone, the flock covered eleven pins. Twenty-six of
+ * the thirty-seven places — nine of the nineteen travel places, among them
+ * Puerto Rico and US-101 — had nothing land on them, so the owner looked at
+ * an empty Oregon and an empty Puerto Rico box and asked, reasonably, why:
+ * "where hover之后pueto rico和Oregon都没有鸟飞过去". The answer was that
+ * nothing in the selection knew the map existed.
+ *
+ * So the pins are a quota, the same way the nine types are. One bird per
+ * empty travel pin, best-photographed first, BEFORE the general fill rather
+ * than after it — which is what keeps TARGET at 58. These nine take the last
+ * nine slots of the fill, not nine extra seats, so the resting swirl is the
+ * same size and the same shape it was; the owner asked for two or three more
+ * birds and this is nine better ones instead of nine more.
+ *
+ * Local places are deliberately not counted: all eighteen collapse to a
+ * single Triangle anchor at country scale, and thirty-five birds already
+ * stand on it. */
+const firstPlaceScope = new Map<string, string>();
+for (const loc of locations) firstPlaceScope.set(loc.id, loc.scope);
+const pinOf = (b: Bird) => {
+  const id = (b.locationIds ?? [])[0];
+  return id && firstPlaceScope.get(id) !== 'local' ? id : null;
+};
+const pinned = new Set(chosen.map(pinOf).filter(Boolean) as string[]);
+for (const loc of locations) {
+  if (loc.scope === 'local' || pinned.has(loc.id)) continue;
+  /* a pin with no coordinates cannot be flown to, so it is not a gap */
+  if (typeof loc.x !== 'number' || typeof loc.y !== 'number') continue;
+  const b = others.find((x) => !taken.has(x.id) && pinOf(x) === loc.id);
+  if (!b) continue; /* no bird lists this place first — honestly unreachable */
+  chosen.push(b);
+  taken.add(b.id);
+  pinned.add(loc.id);
+}
+
 /* Then simply the best-photographed birds until the flock is full. */
 for (const b of others) {
   if (chosen.length >= TARGET) break;
@@ -191,7 +234,7 @@ const ghostArt = usSvg
    label and the leader are placed by flockView, because they depend on the
    window; the axis strip for When is likewise filled by flockView, since the
    axis is one slot per day the *flock* has, and the phone flies fewer birds. */
-const ringPath = inkRing(0, 0, 100);
+const ringPath = inkTriPath(0, 0, 100);
 ---
 
 <Base
