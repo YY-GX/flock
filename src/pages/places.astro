@@ -115,24 +115,6 @@ const triBar = scaleBar('triangle');
       </div>
     </div>
 
-    {/* One line, two readings. A phone has no hover and a 10 px photograph,
-        so it is told what the map is for and where the places are instead. */}
-    <p class="map-hint meta">
-      <span class="map-hint__fine">
-        Hover a pin to meet the other birds it is standing on. Click one to open the
-        place, or the boxed Triangle to go in. Double-click the map — or hold ⌘ and
-        scroll, or press <kbd>+</kbd> — to come closer: the sheet grows, the
-        photographs barely do, and as each place gets room it puts out more of its
-        birds. Drag to move, <kbd>0</kbd> to come back.
-      </span>
-      <span class="map-hint__coarse">
-        At this size the map is a drawing — the photographs are 10 to 27 px across,
-        and it does not enlarge here: a pinch on a sheet this size fights the page
-        you are scrolling. Tap a pin if you can; every place is also a line below,
-        and the boxed Triangle still goes in.
-      </span>
-    </p>
-
     <nav class="place-index" aria-label={`All ${travelPlaces.length + homePlaces.length} places, as a list`}>
       <h2 class="place-index__head">On the road · {travelPlaces.length}</h2>
       <ol class="place-index__list">
@@ -162,6 +144,41 @@ const triBar = scaleBar('triangle');
         ))}
       </ol>
     </nav>
+
+    {/*
+      The sheet first, the words about it second.
+
+      All of this used to print straight onto the page under the map, which
+      made /places a page you had to scroll to have seen — and the thing worth
+      seeing is the map. "这个页面最好不需要scroll down,应该加一个button之类的
+      展示说明". So it folds.
+
+      <details>, not a button and a class: the disclosure is native, so it is
+      a real toggle for a keyboard and a screen reader, it works with no
+      JavaScript at all, and the browser gives it the right roles for free.
+      The only script is the one line that opens it for printing — a printed
+      sheet has no toggles, and the legend is exactly what a printed map needs.
+    */}
+    <details class="map-legend">
+      <summary class="map-legend__toggle">How to read this map</summary>
+      <div class="map-legend__body">
+    {/* One line, two readings. A phone has no hover and a 10 px photograph,
+        so it is told what the map is for and where the places are instead. */}
+    <p class="map-hint meta">
+      <span class="map-hint__fine">
+        Hover a pin to meet the other birds it is standing on. Click one to open the
+        place, or the boxed Triangle to go in. Double-click the map — or hold ⌘ and
+        scroll, or press <kbd>+</kbd> — to come closer: the sheet grows, the
+        photographs barely do, and as each place gets room it puts out more of its
+        birds. Drag to move, <kbd>0</kbd> to come back.
+      </span>
+      <span class="map-hint__coarse">
+        At this size the map is a drawing — the photographs are 10 to 27 px across,
+        and it does not enlarge here: a pinch on a sheet this size fights the page
+        you are scrolling. Tap a pin if you can; every place is also a line below,
+        and the boxed Triangle still goes in.
+      </span>
+    </p>
 
     <ul class="map-key" aria-label="What the marks on the map mean">
       {keys.map((k) => (
@@ -193,10 +210,26 @@ const triBar = scaleBar('triangle');
       the bar beside it measures {usBar.miles} miles. On the Triangle the same bar
       measures {triBar.miles}.
     </p>
+      </div>
+    </details>
+
   </section>
 </Base>
 
 <script>
+  /* A printed sheet has no disclosure to open, and the legend is the one
+     thing a printed map cannot do without. Astro's ClientRouter re-runs this
+     on every navigation, so the listener is registered once on window. */
+  const w = window as unknown as { __placesPrintWired?: boolean };
+  if (!w.__placesPrintWired) {
+    w.__placesPrintWired = true;
+    window.addEventListener('beforeprint', () => {
+      document
+        .querySelectorAll<HTMLDetailsElement>('.map-legend')
+        .forEach((d) => { d.open = true; });
+    });
+  }
+
   /*
    * The camera. A level is a state of this page, not a navigation: the two
    * maps are both in the DOM and CSS scales one into the other. The hash is
@@ -254,9 +287,20 @@ const triBar = scaleBar('triangle');
   .camera {
     /* tall enough to be a map, never taller than the map actually drawn */
     --cam-inline: var(--gutter);
+    /* Three ceilings, and the sheet takes the lowest.
+       1. a share of the window, so it is a map and not a stamp;
+       2. the drawing's own aspect against the page's width, so it is never
+          stretched taller than the artwork actually is;
+       3. ⚠️ the room left on ONE SCREEN. /places is a page whose whole
+          content is a picture, and a picture you have to scroll to finish
+          is a picture you have not seen — "这个页面最好不需要scroll down".
+          472px is the title block (243 at 1440x900, and it grows with the
+          window) plus --page-bottom (150, the compass's own corner) plus air;
+          svh, not vh, so a phone's retracting toolbar cannot make it lie. */
     --cam-h: min(
       clamp(280px, 64vh, 660px),
-      calc((100cqw - 2 * var(--cam-inline)) * 710 / 1000)
+      calc((100cqw - 2 * var(--cam-inline)) * 710 / 1000),
+      calc(100svh - 472px)
     );
     position: relative;
     height: var(--cam-h);
@@ -497,6 +541,81 @@ const triBar = scaleBar('triangle');
    * up there the map is 21.8 px and genuinely is not the interface. Drop the
    * height clause and that case goes back to being unreachable by thumb.
    */
+
+  /* ---------------------------------------------------------------------
+     The folded legend. The map is the page; the words about it are a
+     footnote you ask for.
+     --------------------------------------------------------------------- */
+  .map-legend {
+    margin: clamp(18px, 3vh, 30px) var(--gutter) 0;
+    max-width: 64ch;
+  }
+  /* Closed, the control costs the page no height at all: the head block is
+     one short column in a very wide page, so the toggle goes in the air to
+     its right. It only joins the flow once it is open, which is the moment
+     the reader has asked for the words and scrolling is the point. */
+  @media (min-width: 900px) {
+    .map-legend:not([open]) {
+      position: absolute;
+      top: var(--page-top);
+      right: var(--gutter);
+      margin: 0;
+    }
+    .page { position: relative; }
+  }
+  /* the house link idiom — a hairline under the words, never text-decoration
+     (global.css §7) — plus the disclosure's own mark, which is a caret drawn
+     by the browser and therefore the one UI part of this page. Hidden, and
+     replaced with the site's own: a small rule that turns when it opens. */
+  .map-legend__toggle {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.55em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    cursor: pointer;
+    list-style: none;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.2em;
+    transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  }
+  .map-legend__toggle::-webkit-details-marker { display: none; }
+  .map-legend__toggle::after {
+    content: "";
+    width: 0.62em;
+    height: 0.62em;
+    border-right: 1px solid currentColor;
+    border-bottom: 1px solid currentColor;
+    transform: translateY(-0.18em) rotate(45deg);
+    transition: transform var(--dur) var(--ease);
+  }
+  .map-legend[open] .map-legend__toggle::after { transform: translateY(0.06em) rotate(-135deg); }
+  .map-legend__toggle:hover,
+  .map-legend__toggle:focus-visible { color: var(--ink); border-color: var(--ink-soft); }
+
+  /* the parts inside keep the margins they were written with, so opening the
+     fold reproduces the old page exactly rather than a re-laid-out copy */
+  .map-legend__body > :first-child { margin-top: clamp(14px, 2vh, 22px); }
+  .map-legend__body .map-hint,
+  .map-legend__body .map-key,
+  .map-legend__body .map-note { margin-left: 0; margin-right: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .map-legend__toggle,
+    .map-legend__toggle::after { transition: none; }
+  }
+
+  /* A printed map has no toggle to press and a legend is exactly what it
+     needs, so the fold is not a fold on paper. The inline script opens it on
+     `beforeprint`; this hides the control that would otherwise print as a
+     stray line of small caps. */
+  @media print {
+    .map-legend__toggle { display: none; }
+  }
+
   .place-index { display: none; }
 
   @media (max-width: 860px), (max-height: 800px) {

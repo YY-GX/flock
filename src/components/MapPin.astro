@@ -12,6 +12,26 @@
  * belongs to the bird's tile in the grid, and one name per page is the rule.
  */
 import BirdThumb from './BirdThumb.astro';
+
+/*
+ * Pixels per CSS pixel in a pin's photograph — four, against BirdThumb's
+ * default of two.
+ *
+ * The map zooms now, and a pin grows with it (as z**0.35). BirdThumb's "2"
+ * is not headroom on a Retina screen, it is EXACTLY one device pixel per
+ * image pixel at rest, so at DPR 2 every pin began upscaling the instant the
+ * sheet passed 1x — which is the softness the owner photographed. The old
+ * reasoning that upscaling starts at z = 7.25 quietly assumed DPR 1.
+ *
+ * At 4 the plate is sharp on a Retina screen until the pin itself has
+ * doubled, i.e. z**0.35 = 2, i.e. z = 7.25 — now genuinely, and above the
+ * 6x ceiling mapZoom clamps to. So the sheet is sharp everywhere it goes.
+ *
+ * It is paid for by the 37 faces and the 155 deck cards only; nothing else
+ * on the site asks for it, and a deck card is still not fetched until the
+ * reader zooms.
+ */
+const PIN_DENSITY = 4;
 import { placeTransitionName, splitName } from '../lib/flock';
 import { FAN_RING, type PlaceView } from '../lib/mapView';
 import { withBase } from '../lib/paths';
@@ -143,6 +163,7 @@ const fanAt = place.fanAt.join(' ');
         transition={false}
         class="map-pin__thumb"
         style="--thumb:100%"
+        density={PIN_DENSITY}
       />
     ) : (
       <span class="map-pin__n">{place.count}</span>
@@ -174,6 +195,7 @@ const fanAt = place.fanAt.join(' ');
             opens={false}
             transition={false}
             style="--thumb:100%"
+            density={PIN_DENSITY}
           />
         </span>
       ))}

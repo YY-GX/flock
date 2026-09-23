@@ -162,6 +162,17 @@ interface Props {
   class?: string;
   /** Extra inline style on the root (merged after the transition name). */
   style?: string;
+  /**
+   * How many image pixels to build per CSS pixel of the box. Default 2.
+   *
+   * ⚠️ 2 IS ONE-TO-ONE ON A RETINA SCREEN, NOT TWICE OVER. It is the right
+   * default for a plate that never changes size, and wrong for anything the
+   * reader can enlarge: the map's pins scale with the zoom, so at DPR 2 they
+   * begin upscaling the moment the sheet passes 1x, not at the 2x the "2"
+   * makes it look like. That arithmetic error is what made a zoomed map soft
+   * (see MapPin, which asks for 4).
+   */
+  density?: number;
 }
 
 const {
@@ -177,6 +188,7 @@ const {
   transition = true,
   class: className = '',
   style = '',
+  density = 2,
 } = Astro.props;
 
 const file = firstPhotoFile(bird);
@@ -197,7 +209,7 @@ if (asset) {
   const srcW = focal?.w || asset.width;
   const srcH = focal?.h || asset.height;
   const boxRatio = shape === 'portrait' ? 3 / 4 : shape === 'free' ? 0 : 1;
-  const edge = Math.round(size * 2);
+  const edge = Math.round(size * density);
 
   if (boxRatio && srcW && srcH) {
     const crop = planCrop(focal, srcW, srcH, edge, Math.round(edge / boxRatio));
