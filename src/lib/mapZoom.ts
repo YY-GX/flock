@@ -108,8 +108,41 @@ export function createMapZoom(map: HTMLElement): MapZoom | null {
     ty = Math.min(my, Math.max(-my, ty));
   }
 
+  /*
+   * ⚠️ WHY THE LAYER IS DROPPED AS SOON AS THE HAND STOPS
+   *
+   * A scaled element that the compositor has promoted to its own layer is
+   * rasterised ONCE and the texture is then stretched. On the GPU that
+   * texture is not re-made just because the scale changed, so a map held at
+   * 6x goes on being a 1x picture blown up sixfold: soft coastline, soft
+   * photographs, and — the tell the owner reported — occasionally sharp,
+   * whenever something else on the page forces a repaint and Chrome happens
+   * to redraw that tile. "鼠标移动有时候清晰有时候又模糊."
+   *
+   * `will-change: transform` is a promise that the transform keeps changing,
+   * so it keeps the layer alive and the stale texture with it. It is the
+   * right hint DURING a gesture, when frames matter more than sharpness, and
+   * the wrong one the instant the reader lets go. So it is hung on
+   * `data-gesturing`, which is cleared here on a timer just past the
+   * transition, and the layer collapses back into the page and is re-drawn
+   * at the scale it is actually at.
+   *
+   * ⚠️ This is invisible to the headless harness in the scratchpad: it runs
+   * Chrome with `--disable-gpu`, which rasterises on the CPU and re-draws on
+   * every transform, so a probe there measures the same sharpness with the
+   * hint and without it. Do not "verify" this by measuring it that way and
+   * do not conclude from such a measurement that the hint is harmless.
+   */
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  function gesturing(): void {
+    map.setAttribute('data-gesturing', '');
+    clearTimeout(settle);
+    settle = setTimeout(() => map.removeAttribute('data-gesturing'), 420);
+  }
+
   function apply(animate: boolean): void {
     wrap.style.transitionDuration = animate && !reduced() ? '' : '0s';
+    gesturing();
     wrap.style.transform = k > 1 ? `translate(${tx}px, ${ty}px) scale(${k})` : '';
     /*
      * `--mz` is the sheet's scale and `--pin-k` is the pin's counter-scale

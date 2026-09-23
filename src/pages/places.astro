@@ -550,18 +550,41 @@ const triBar = scaleBar('triangle');
     margin: clamp(18px, 3vh, 30px) var(--gutter) 0;
     max-width: 64ch;
   }
-  /* Closed, the control costs the page no height at all: the head block is
-     one short column in a very wide page, so the toggle goes in the air to
-     its right. It only joins the flow once it is open, which is the moment
-     the reader has asked for the words and scrolling is the point. */
+  /* The control costs the page no height: the head block is one short column
+     in a very wide page, so it lives in the air to its right.
+     ⚠️ ALWAYS, open or closed. It used to be absolute only while closed, so
+     opening it dropped it back into the flow and it leapt from the top right
+     to under the map — "点击后莫名其妙移动到左下角了". A control that moves
+     when you press it is a control you cannot press twice. Open, the words
+     unfold downwards from where the control already is, as a panel on the
+     paper rather than as new page. */
   @media (min-width: 900px) {
-    .map-legend:not([open]) {
+    .page { position: relative; }
+    .map-legend {
       position: absolute;
       top: var(--page-top);
       right: var(--gutter);
       margin: 0;
+      /* over the map's own stack, whose pins run to 160 (MapStage, MapPin),
+         and under the compass at 45 in global.css — the rose is navigation
+         and must stay reachable with the legend open */
+      z-index: 200;
+      width: min(46ch, calc(100vw - 2 * var(--gutter)));
+      text-align: right;
     }
-    .page { position: relative; }
+    /* the panel: paper under the words so they never sit on the map, and a
+       hairline so it reads as a sheet laid on the sheet, not as a dialog */
+    .map-legend[open] .map-legend__body {
+      text-align: left;
+      margin-top: 0.9em;
+      padding: 1.1em 1.2em 1.3em;
+      background: var(--paper);
+      box-shadow: 0 0 0 1px var(--rule), var(--lift-sm);
+      max-height: min(62vh, 640px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .map-legend[open] .map-legend__body .map-hint { max-width: none; }
   }
   /* the house link idiom — a hairline under the words, never text-decoration
      (global.css §7) — plus the disclosure's own mark, which is a caret drawn

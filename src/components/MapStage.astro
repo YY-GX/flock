@@ -633,10 +633,12 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
     transform-origin: 50% 50%;
     transition: transform 260ms var(--ease);
   }
-  /* promoted only while it is actually moving: two inlined sheets on /places,
-     both permanently on their own layer, is a lot of memory for a drawing
-     that is usually still */
-  .map[data-zoomed] .map__zoom { will-change: transform; }
+  /* Promoted only while the hand is actually moving — `data-gesturing`, not
+     `data-zoomed`. A promoted layer is rasterised once and its texture then
+     stretched, so leaving the hint on for the whole time the map is enlarged
+     is what made a 6x map a blurry 1x picture. mapZoom.ts carries the full
+     note, including why the headless harness cannot see it. */
+  .map[data-gesturing] .map__zoom { will-change: transform; }
   /*
    * The artwork is bigger than the sheet the moment it is enlarged, and the
    * sheet is where it has to stay. Only then, though: at rest a pin's hover
