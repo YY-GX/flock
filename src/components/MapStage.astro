@@ -20,9 +20,6 @@ import {
   homeInsetDots,
   inkTri,
   inkArrow,
-  routes,
-  heldRoutes,
-  runOfPlace,
   compassRose,
   scaleBar,
   HOME_RING_R,
@@ -111,17 +108,7 @@ const boxLabel = { x: box.x + HOME_INSET_PAD, y: box.y + box.h - 7 };
 
 /*
  * The trips. Three on the US map, one same-day pair on the Triangle; the
- * rule and the numbers are in mapView.ts under "pencil trip routes". A route
- * is drawn under the discs and over the artwork, never takes the pointer,
- * and follows the pins wherever the dodge put them.
- *
- * A page that is already showing a run's places in full ink holds its route
- * open — which covers both /places/<slug> and /days/<iso> without either of
- * them having to name a run: the places they light up are the run.
  */
-const routeList = routes(space);
-const held = new Set(heldRoutes(space, lit).map((r) => r.id));
-const runBySlug = runOfPlace(space);
 
 /*
  * The furniture (TODO B7): a north point and a scale bar, both in the map's
@@ -234,52 +221,12 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
     </svg>
   )}
 
-  {routeList.length > 0 && (
-    <svg
-      class="map__routes"
-      viewBox={`0 0 ${def.width} ${def.height}`}
-      aria-hidden="true"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      <defs>
-        {/*
-          The coastline's own filter is baseFrequency 0.012 — one wavelength
-          every 83 units, which on a 60-unit leg is not a wobble but a bend.
-          The ring's is 0.05/0.07, wound tight for a 62-unit circle whose
-          outline is 340 units long. A leg is long, thin and short-lived, so
-          it wants something between the two: 0.034/0.042 puts roughly two
-          soft undulations along each leg — a pencil that was not held
-          against a ruler, rather than a line with a tremor.
-        */}
-        <filter id={`route-wobble-${space}`} x="-20%" y="-20%" width="140%" height="140%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.034 0.042" numOctaves="2" seed="11" result="n" />
-          <feDisplacementMap in="SourceGraphic" in2="n" scale="2" xChannelSelector="R" yChannelSelector="G" />
-        </filter>
-      </defs>
-
-      {routeList.map((route) => (
-        <g
-          class:list={['map__route', held.has(route.id) && 'is-held']}
-          data-run={route.id}
-          filter={`url(#route-wobble-${space})`}
-        >
-          {route.segments.map((seg) => (
-            <path class:list={['map__seg', `seg--${seg.kind}`]} d={seg.d} />
-          ))}
-        </g>
-      ))}
-    </svg>
-  )}
 
   <div class="map__pins">
     {places.map((place) => (
       <MapPin
         place={place}
         active={lit.has(place.slug)}
-        run={runBySlug.get(place.slug) ?? null}
-        {/* the page's own place already wears full ink; "same trip" is the
-            claim about the *other* pins on the line */}
-        held={!lit.has(place.slug) && held.has(runBySlug.get(place.slug) ?? '')}
         href={place.slug === activeSlug ? null : withBase(`/places/${place.slug}`)}
         transition={transition}
       />
@@ -360,67 +307,7 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
     )}
   </div>
 
-  {routeList.length > 0 && (
-    <svg
-      class="map__routes map__routes--over"
-      viewBox={`0 0 ${def.width} ${def.height}`}
-      aria-hidden="true"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      {/*
-        The second pen pass, and the one layer on this map that is allowed
-        over a photograph.
 
-        Measured: a pin is 37-84 viewBox units wide and the places on one
-        trip are 57-116 apart, so a line between two tail tips spends 28% of
-        Colorado and 52% of New England behind somebody's disc — growing the
-        bow to 0.62 of the chord only moved New England to 43%, because the
-        north-east is eight overlapping photographs and there is nowhere for
-        a line to go. So the resting line stays under the pins, where
-        DESIGN2 §2.2 put it, and the full-ink copy comes over the top: ask
-        about a trip and the whole line is legible end to end. A pencil line
-        over a print is what an annotated map looks like anyway.
-
-        It no longer *draws itself* to get there. The owner asked for the
-        route-trace animation to go: the line was the drawing, the 480 ms
-        stroke across the map was a performance of it, and on a map you are
-        moving a pointer over it kept re-performing. What is left is a state,
-        not an event — the same ink, arriving as a crossfade like every other
-        hover on this site. The `--len` dash machinery went with it; the
-        measured lengths stay, because they are what mapView adds up to
-        report the run's total.
-      */}
-      {routeList.map((route) => (
-        <g
-          class:list={['map__route', held.has(route.id) && 'is-held']}
-          data-run={route.id}
-          filter={`url(#route-wobble-${space})`}
-        >
-          {route.segments.map((seg) => (
-            <path class="map__seg map__seg--case" d={seg.d} />
-          ))}
-          {route.segments.map((seg) => (
-            <path class="map__seg map__seg--trace" d={seg.d} />
-          ))}
-        </g>
-      ))}
-    </svg>
-  )}
-
-  {routeList.length > 0 && (
-    <div class="map__route-labels" aria-hidden="true">
-      {routeList.map((route) => (
-        <p
-          class:list={['map__route-lbl', 'meta', held.has(route.id) && 'is-held']}
-          data-run={route.id}
-          style={`--x:${route.labelX};--y:${route.labelY}`}
-        >
-          <span class="map__route-name">{route.labelHead}</span>
-          <span class="map__route-sub">{route.labelSub}</span>
-        </p>
-      ))}
-    </div>
-  )}
 </div>
 
 <script>
@@ -578,47 +465,6 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
     return target instanceof Element ? target.closest<HTMLElement>('.map-pin[data-deck]') : null;
   }
 
-  /*
-   * The trips. Hovering any pin of a run brings its pencil line up in full
-   * ink over the photographs, lights its other places and names the trip.
-   *
-   * Deliberately NOT the bird glow's machinery: this is a different claim
-   * ("the same journey", not "the same bird"), it uses --ink-soft rather
-   * than a type colour, and the rest of the map does not step back to 0.3 —
-   * so it gets its own class and its own clear, and the two can never wipe
-   * each other. `is-held` is the server's, for a page that already is the
-   * trip, and nothing here touches it.
-   */
-  const TRIP = 'is-trip';
-  let tripRun: string | null = null;
-
-  function clearTrip() {
-    if (tripRun === null) return;
-    tripRun = null;
-    document
-      .querySelectorAll<HTMLElement>('.' + TRIP)
-      .forEach((el) => el.classList.remove(TRIP));
-  }
-
-  function trip(pin: HTMLElement) {
-    const id = pin.dataset.run;
-    if (!id || id === tripRun) return;
-    const map = pin.closest<HTMLElement>('.map');
-    if (!map) return;
-    clearTrip();
-    tripRun = id;
-    const sel = CSS.escape(id);
-    map
-      .querySelectorAll<HTMLElement>(
-        `.map-pin[data-run="${sel}"], .map__route[data-run="${sel}"], .map__route-lbl[data-run="${sel}"]`,
-      )
-      .forEach((el) => el.classList.add(TRIP));
-  }
-
-  function runFrom(target: EventTarget | null): HTMLElement | null {
-    return target instanceof Element ? target.closest<HTMLElement>('.map-pin[data-run]') : null;
-  }
-
   document.addEventListener('pointerover', (e) => {
     const item = itemFrom(e.target);
     if (item) glow(item);
@@ -628,9 +474,6 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
     if (pin) startFlip(pin);
     else if (flipPin) stopFlip();
 
-    const onRun = runFrom(e.target);
-    if (onRun) trip(onRun);
-    else clearTrip();
   });
   document.addEventListener('focusin', (e) => {
     const item = itemFrom(e.target);
@@ -641,19 +484,14 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
     if (pin) startFlip(pin);
     else stopFlip();
 
-    const onRun = runFrom(e.target);
-    if (onRun) trip(onRun);
-    else clearTrip();
   });
   document.addEventListener('astro:page-load', () => {
     clearGlow();
     stopFlip();
-    clearTrip();
   });
   document.addEventListener('bird:open', () => {
     clearGlow();
     stopFlip();
-    clearTrip();
   });
 </script>
 
@@ -814,140 +652,6 @@ const ANCHOR = { start: '0%', end: '-100%' } as const;
     stroke-width: 1;
     vector-effect: non-scaling-stroke;
     opacity: 0.5;
-  }
-
-  /* ---------------------------------------------------------------------
-     The trips. A pencil line between two pins is the only thing on this map
-     that says the birds were somewhere in an order: 49 birds over four days
-     in Colorado is a drive, not a list. Drawn under the discs, over the
-     artwork, and never in the way of a click.
-     --------------------------------------------------------------------- */
-  .map__routes {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    overflow: visible;
-    /* a route never steals a click from a pin, a leader or the marker */
-    pointer-events: none;
-  }
-
-  /* the full-ink layer: over the pins, under the Triangle marker */
-  .map__routes--over { z-index: 134; }
-
-  .map__route {
-    /* 0.38 over the grain is a line you have to look for — the map's story
-       at rest is still the photographs */
-    opacity: 0.38;
-    transition: opacity 220ms var(--ease);
-  }
-  .map__route.is-trip,
-  .map__route.is-held { opacity: 0.9; }
-  /* the layer that draws over the photographs is invisible until asked */
-  .map__routes--over .map__route { opacity: 0; }
-  .map__routes--over .map__route.is-trip,
-  .map__routes--over .map__route.is-held { opacity: 1; }
-
-  /*
-   * Asked for, the line is full ink at 1.7. DESIGN2 §2.2 says --ink-soft at
-   * 1.3 throughout, and at rest that is exactly right — but §5.2 had already
-   * learned this on the Triangle arrow: against the grained paper --ink-soft
-   * lets the one mark you asked for sink into the texture. Measured at 1:1
-   * in the north-east, where the line is half behind photographs, 1.3 of
-   * soft ink was a whisper. At rest it stays soft and thin.
-   */
-  .map__routes--over .map__seg--trace {
-    stroke: var(--ink);
-    stroke-width: 1.7;
-  }
-
-  .map__seg {
-    fill: none;
-    stroke: var(--ink-soft);
-    stroke-width: 1.3;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
-  }
-  /* two different days: dashed, and it knows which way it went */
-  .map__seg.seg--days { stroke-dasharray: 6 4; }
-  /* one day, two places, no time of day anywhere in the data: dotted and
-     undirected, because the order is not knowable (DESIGN2 §0.4) */
-  .map__seg.seg--same { stroke-dasharray: 1.5 3.5; }
-
-  /*
-   * The second pen pass, exactly over the first.
-   *
-   * It used to draw itself: each leg carried its measured `--len` as a dash
-   * the width of the whole path, and `is-trip` released the offset so the
-   * stroke ran from the run's first place to its last in 480 ms. The owner
-   * asked for that animation to go ("where 的地图上去掉路线轨迹动画"), and
-   * they are right — the line is the drawing, and re-drawing it every time a
-   * pointer crossed a pin turned a map into a demo. The whole `--len` /
-   * `--trace-dly` / `--trace-dur` apparatus went with it; nothing on this
-   * layer is timed against anything else any more.
-   *
-   * What answers a hover now is the parent group's own opacity crossfade
-   * (220 ms, above) — the same fade every other hover on this site uses.
-   * The lit state is unchanged: full --ink at 1.7 over the photographs, the
-   * other pins on the run ringed, the label up.
-   */
-  /* `.map__seg--trace` itself carries no rule any more — its ink and weight
-     come from `.map__routes--over` above. The class stays because it is what
-     that selector and the casing below are written against. */
-  /* a hair of paper under the pen, so the line still reads where it crosses
-     a dark photograph — the casing a drawn line has on any printed map */
-  .map__seg--case {
-    stroke: var(--paper);
-    stroke-width: 4.2;
-    opacity: 0.75;
-  }
-
-  /* the label is HTML, not SVG: it keeps its point size while the map
-     shrinks, exactly like the marker's count line */
-  .map__route-labels {
-    position: absolute;
-    inset: 0;
-    /* over the pins, under the Triangle marker (140): a pill of paper that
-       was chopped in half by a photograph would be worse than one that
-       covers a corner of it, and it is only ever up while you point at it */
-    z-index: 135;
-    pointer-events: none;
-  }
-
-  .map__route-lbl {
-    position: absolute;
-    left: calc(var(--x) * 1%);
-    top: calc(var(--y) * 1%);
-    transform: translate(-50%, -100%) translateY(-14px);
-    margin: 0;
-    padding: 0.15em 0.5em;
-    background: var(--paper);
-    text-align: center;
-    white-space: nowrap;
-    text-transform: none;
-    letter-spacing: 0.02em;
-    color: var(--ink-faint);
-    opacity: 0;
-    transition: opacity 200ms var(--ease);
-  }
-  /* 120 ms, not the old 300: the delay was the pen's head start, and its
-     second job — not flashing a pill at every pointer that sweeps across a
-     pin on its way somewhere else — is done by a fifth of a second just as
-     well. The line and its name now arrive together. */
-  .map__route-lbl.is-trip,
-  .map__route-lbl.is-held {
-    opacity: 1;
-    transition: opacity 200ms var(--ease) 120ms;
-  }
-  .map__route-name,
-  .map__route-sub { display: block; }
-  .map__route-name { color: var(--ink-soft); }
-
-  @media (max-width: 560px) {
-    /* the lines still scale and still read — 1.3px is 1.3px at any width —
-       but a paper pill of 11px type over a 350px map is a blindfold */
-    .map__route-lbl { display: none; }
   }
 
   /* the inset labels are 11px on the paper: they need their full ink */

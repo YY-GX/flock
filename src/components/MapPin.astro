@@ -22,10 +22,7 @@ interface Props {
   href?: string | null;
   /** draw it as the place being read right now */
   active?: boolean;
-  /** the drawable trip this place belongs to, if any — MapStage's routes() */
-  run?: string | null;
   /** that trip is the subject of this page, so it stays lit (DESIGN2 §2.3) */
-  held?: boolean;
   /** claim place-<slug>. One element per document. */
   transition?: boolean;
 }
@@ -34,8 +31,6 @@ const {
   place,
   href = withBase(`/places/${place.slug}`),
   active = false,
-  run = null,
-  held = false,
   transition = true,
 } = Astro.props;
 
@@ -96,13 +91,11 @@ const deck = place.isHome ? [] : place.deck;
     dodged && 'map-pin--dodged',
     place.isHome && 'map-pin--house',
     edge && `map-pin--${edge}`,
-    held && 'is-held',
     here && 'is-here',
   ]}
   style={style}
   href={href ?? undefined}
   data-place={place.slug}
-  data-run={run ?? undefined}
   data-count={place.count}
   data-deck={deck.length || undefined}
   aria-label={href ? label : undefined}
@@ -386,22 +379,6 @@ const deck = place.isHome ? [] : place.deck;
 
   .map-pin:hover .map-pin__disc,
   .map-pin:focus-visible .map-pin__disc { transform: scale(1.09); }
-
-  /*
-   * Same trip. A quieter claim than the bird glow and a different one, so it
-   * is a different class: --ink-soft rather than a type colour, no dimming
-   * of the rest of the map, and it survives the bird glow being cleared.
-   * `is-held` is the server's — a place page and a day page hold their own
-   * trip open — and `is-trip` is the hover, from the MapStage script.
-   */
-  .map-pin.is-trip:not(.is-active) .map-pin__disc,
-  .map-pin.is-held:not(.is-active) .map-pin__disc {
-    transform: scale(1.08);
-    box-shadow:
-      0 0 0 2px var(--paper),
-      0 0 0 3px var(--ink-soft),
-      0 0 18px 5px color-mix(in srgb, var(--ink-soft) 30%, transparent);
-  }
   /* the ring only. The route's own label already names the trip, and five
      paper pills stacked over three photographs is not a map */
 

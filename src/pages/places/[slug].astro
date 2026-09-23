@@ -15,7 +15,7 @@ import BirdPanel from '../../components/BirdPanel.astro';
 import MapStage from '../../components/MapStage.astro';
 import MapPlaceGrid from '../../components/MapPlaceGrid.astro';
 import { formatDate } from '../../lib/flock';
-import { places, placesIn, placeBySlug, placeSlugsOf, heldRoutes, routeNote } from '../../lib/mapView';
+import { places, placesIn, placeBySlug, placeSlugsOf } from '../../lib/mapView';
 import { withBase } from '../../lib/paths';
 
 export function getStaticPaths() {
@@ -49,9 +49,6 @@ const away = place.birds.filter((b) =>
 ).length;
 const otherMap = place.space === 'triangle' ? 'the US map' : 'the home patch';
 
-/* If this place is on a drawable trip, the map is already holding the route
-   open; say in words what the pencil line means and what its count counts. */
-const trip = heldRoutes(place.space, [place.slug])[0] ?? null;
 ---
 
 <Base
@@ -74,7 +71,6 @@ const trip = heldRoutes(place.space, [place.slug])[0] ?? null;
       <div class="place__map">
         <MapStage space={place.space} places={pins} activeSlug={place.slug} />
         <div class="place__foot">
-          {trip && <p class="place__trip">{routeNote(trip)}</p>}
           {/* Always in flow, never `hidden`: it holds its two lines empty so
               that hovering a bird cannot move the link below it (TODO C5).
               MapStage's script fills it and empties it.
@@ -240,7 +236,6 @@ const trip = heldRoutes(place.space, [place.slug])[0] ?? null;
 
   .place__foot { min-width: 0; }
 
-  .place__trip,
   .map-else,
   /* The gesture half of the hint, and its no-gesture twin. `hover: hover`
      is the one query that asks what the pointer can actually do. */
@@ -271,8 +266,6 @@ const trip = heldRoutes(place.space, [place.slug])[0] ?? null;
     color: var(--ink-soft);
     min-height: 3em;
   }
-  /* the pencil line's own footnote: the one place the caveat is spelled out */
-  .place__trip { color: var(--ink-soft); }
 
   .place__back {
     display: inline-block;
