@@ -1,0 +1,752 @@
+---
+/**
+ * Home — the flock.
+ *
+ * No nav, no hero copy, no explanation. Fifty-odd birds wheel slowly around
+ * one word and three numbers; four more words are the only way in, and
+ * hovering one flies the flock into that view's formation.
+ *
+ * Birds cannot draw the United States; paper can. So each hover is three
+ * layers, not one (DESIGN.md §1): the flock completes the formation, a ghost
+ * of the destination view's *own* scaffold fades in behind it — the real
+ * `us.svg` coastline, a hairline time axis with its months and years, the
+ * nine group names — and one italic line says what the arrangement means.
+ * Without the scaffold, "Where" is 58 circles in a shape; with it, it is a
+ * map with a big clump over North Carolina, which is the truth.
+ *
+ * Geometry and interaction live in src/lib/flockView.ts. This file picks the
+ * birds, sizes them, gives each one its drift, and draws the scaffolds;
+ * flockView tells them where to stand via --gx…--gh and --tx…--th on #flock.
+ */
+import Base from '../layouts/Base.astro';
+import BirdThumb from '../components/BirdThumb.astro';
+import BirdPanel from '../components/BirdPanel.astro';
+import usSvg from '../assets/map/us.svg?raw';
+import { birds, locations, photosById } from '../lib/data';
+import { TYPE_ORDER, canonicalType, typeKey, splitName, typeLabel } from '../lib/flock';
+import { inkRing } from '../lib/mapView';
+import type { Bird } from '../lib/types';
+import { withBase } from '../lib/paths';
+
+/* ---------------- who gets to fly ---------------- */
+
+const photoCount = (b: Bird) =>
+  (b.photoIds ?? []).reduce((n, id) => n + (photosById.get(id)?.files?.length ?? 0), 0);
+
+/* 43 birds nobody has seen, and two spotted ones whose photo row is empty —
+   45 cards with no photograph between them. None of them ever enters the
+   flock: a hollow frame does not read as a bird here. */
+const pool = birds.filter((b) => b.spotted && photoCount(b) > 0);
+
+const favourites = pool.filter((b) => b.favorite);
+const others = pool
+  .filter((b) => !b.favorite)
+  .sort((a, b) => photoCount(b) - photoCount(a) || a.name.localeCompare(b.name));
+
+const TARGET = 58; // enough to read as a flock, few enough to stay smooth
+const chosen: Bird[] = [...favourites];
+const taken = new Set(chosen.map((b) => b.id));
+
+/* Two of every type first, so the "Which" morph really has nine clumps. */
+for (const type of TYPE_ORDER) {
+  let n = 0;
+  for (const b of others) {
+    if (n === 2) break;
+    if (taken.has(b.id) || canonicalType(b.type) !== type) continue;
+    chosen.push(b);
+    taken.add(b.id);
+    n++;
+  }
+}
+/* Then simply the best-photographed birds until the flock is full. */
+for (const b of others) {
+  if (chosen.length >= TARGET) break;
+  if (taken.has(b.id)) continue;
+  chosen.push(b);
+  taken.add(b.id);
+}
+
+/** Importance — the phone keeps the low ranks and drops the tail. */
+const rankOf = new Map(chosen.map((b, i) => [b.id, i]));
+
+/* A fixed shuffle, so favourites are scattered through the swirl rather than
+   bunched on one arm, but the flock looks the same on every build. */
+let seed = 0x1f2e3d;
+const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+const flock = chosen.slice();
+for (let i = flock.length - 1; i > 0; i--) {
+  const j = Math.floor(rnd() * (i + 1));
+  [flock[i], flock[j]] = [flock[j], flock[i]];
+}
+
+/* ---------------- the three real numbers ---------------- */
+
+const spotted = birds.filter((b) => b.spotted);
+const dates = spotted
+  .map((b) => b.firstSpotted)
+  .filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d))
+  .sort();
+const first = dates[0] ?? '2024-09-07';
+const last = dates[dates.length - 1] ?? first;
+/* The third number is days out, not "since Sep 2024": the timeline already
+   says when the record starts, and /days is a place you can go (DESIGN2
+   §1.4). Counted the same way src/lib/days.ts counts them — distinct
+   firstSpotted of the spotted birds — so the two can never disagree. */
+const daysOut = new Set(dates.map((d) => d.slice(0, 10))).size;
+const stats = `${spotted.length} species · ${locations.length} places · ${daysOut} days out`;
+
+const day = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+const span = Math.max(1, day(last) - day(first));
+
+/* ---------------- how each one looks and drifts ---------------- */
+
+const DRIFTS = ['a', 'b', 'c', 'd'];
+
+const field = flock.map((bird, i) => {
+  const n = photoCount(bird);
+  /* Four tiers over a 2.2x range, not three over 1.65x. The wide range is what
+     lets the eye read a near bird and a far one instead of a field of one
+     size: the ten favourites fly closest, then the best-photographed. */
+  const size = bird.favorite ? 100 : n >= 14 ? 80 : n >= 9 ? 62 : 46;
+  const key = typeKey(bird.type);
+  const date = bird.firstSpotted ? (day(bird.firstSpotted) - day(first)) / span : 0.5;
+  return {
+    bird,
+    size,
+    english: splitName(bird.name).english,
+    type: key === 'other' ? 9 : Number(key) - 1,
+    date: Math.max(0, Math.min(1, date)),
+    rank: rankOf.get(bird.id) ?? i,
+    drift: DRIFTS[i % DRIFTS.length],
+    dur: 22 + ((i * 7) % 15),
+    delay: (i * 13) % 34,
+  };
+});
+
+/* ---------------- the four words, and what each one means ----------------
+ *
+ * Necessary, not decorative. The morph is honest — real coordinates, real
+ * dates — but honest is not the same as legible, and one line in the corner
+ * of the eye is the difference between "why are the birds moving" and "oh,
+ * that is where they were". No full stop: it is a whisper, not a sentence.
+ */
+/* The cabinet on /list holds a card for every bird on the record, 281 of
+   them, and an empty frame wherever there is no photograph. That is 45, not
+   43: the 43 nobody has seen, plus the two spotted birds whose photo row is
+   empty, which render hollow in the grid above the ghost wall. Counting
+   `!spotted` here said 43 and the page shows 45. Counted rather than written
+   down, because the next Notion sync will move it. */
+const hollow = birds.filter((b) => !photoCount(b)).length;
+
+const ways = [
+  /* NOT "the place it was first seen". A bird's `locationIds` is a Notion
+     relation — an unordered set with no chronology in it (DESIGN2 §0) — and
+     flockView reads position 0 of it, which for 82 of the 281 birds is not
+     even alphabetical. Which of a bird's places came first is simply not in
+     this data, so the line says what is: one of them. */
+  { word: 'Where', href: withBase('/places'), form: 'map',
+    hint: 'each bird flies to one of the places it was seen' },
+  /* "nearly half", not "most": summer 2025 holds 109 of the 238, which is
+     45.8% — a plurality. All the summers together are 126, but that is two
+     summers and not what the line says. */
+  { word: 'When', href: withBase('/timeline'), form: 'timeline',
+    hint: 'each bird lands on the day it was first seen — nearly half of them in one summer' },
+  { word: 'Which', href: withBase('/groups'), form: 'groups',
+    hint: 'nine kinds, sized by how many' },
+  { word: 'All', href: withBase('/list'), form: 'list',
+    hint: `all ${birds.length}, as a cabinet — ${hollow} still empty` },
+];
+
+/* ---------------- the ghost scaffolds ----------------
+ *
+ * Where: the very same artwork /places draws, inlined so the --map-*
+ * variables reach it, re-themed to a pencil coastline at 16% ink. The one
+ * edit is to the root class: the file themes itself off `.map-root`, and
+ * renaming that hands the variables back to us without touching the
+ * artwork (src/assets/map/us.svg and _build-map.py stay as they are).
+ */
+const ghostArt = usSvg
+  .replace(/id="wobble"/g, 'id="wobble-home"')
+  .replace(/url\(#wobble\)/g, 'url(#wobble-home)')
+  .replace(/id="us-title"/g, 'id="home-ghost-title"')
+  .replace(/aria-labelledby="us-title"/g, 'aria-labelledby="home-ghost-title"')
+  .replace(
+    /class="map-root"/,
+    'class="scaf-root" style="width:100%;height:100%;display:block"',
+  );
+
+/* The Research Triangle ring — the same `inkRing`, the same seed 23, so the
+   home clump and the home patch on /places are literally one gesture.
+
+   Drawn at r = 100 in its own viewBox rather than at the 3.1%-of-the-map
+   radius the real map uses: at country scale that ring is 34px across and
+   thirty-four birds sit on top of it, so the "same mark" would never be
+   seen. flockView sizes this one to the clump it circles. */
+const ringPath = inkRing(0, 0, 100);
+
+/* When: month ticks and year numbers, positioned as a percentage of the
+   axis, which flockView stretches from `pad` to `W - pad` — the exact range
+   it maps the dates into, so tick and bird agree at any width. */
+const at = (ms: number) => Math.max(0, Math.min(1, (ms - day(first)) / span));
+const ticks: Array<{ t: number; jan: boolean }> = [];
+for (
+  let y = Number(first.slice(0, 4)), m = Number(first.slice(5, 7));
+  y * 12 + m <= Number(last.slice(0, 4)) * 12 + Number(last.slice(5, 7));
+
+) {
+  const ms = Date.UTC(y, m - 1, 1);
+  if (ms >= day(first) && ms <= day(last)) ticks.push({ t: at(ms), jan: m === 1 });
+  m += 1;
+  if (m > 12) {
+    m = 1;
+    y += 1;
+  }
+}
+const years: Array<{ y: number; t: number }> = [];
+for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
+  years.push({ y, t: at(Date.UTC(y, 0, 1)) });
+}
+---
+
+<Base
+  title="Flock · Birding Checklist"
+  description={stats}
+  bodyClass="is-home"
+>
+  <div class="flock" id="flock">
+    {/* The three ghosts. One faded SVG, a strip of hairlines and nine labels —
+        all of them outside .flock__field, none of them animated per frame, so
+        the 60fps the flock costs stays the 60fps it costs. */}
+    <div class="scaf scaf--map" aria-hidden="true" set:html={ghostArt} />
+    <svg class="scaf scaf--ink" aria-hidden="true" viewBox="-116 -116 232 232" preserveAspectRatio="xMidYMid meet">
+      <path d={ringPath} />
+    </svg>
+
+    <div class="scaf scaf--tl" aria-hidden="true">
+      <div class="scaf__axis"></div>
+      {ticks.map((k) => (
+        <i class:list={['scaf__tick', { 'is-jan': k.jan }]} style={`left:${(k.t * 100).toFixed(3)}%`} />
+      ))}
+      {years.map((k) => (
+        <span class="scaf__year meta" style={`left:${(k.t * 100).toFixed(3)}%`}>{k.y}</span>
+      ))}
+    </div>
+
+    <div class="scaf scaf--groups" aria-hidden="true">
+      {TYPE_ORDER.map(() => <i class="scaf__ring" />)}
+      {TYPE_ORDER.map((t) => <span class="scaf__tag meta">{typeLabel(t)}</span>)}
+    </div>
+
+    <div class="flock__field">
+      {field.map((f) => (
+        <div
+          class="fb"
+          style={`--i:${f.rank};width:${f.size}px;height:${f.size}px`}
+          data-size={f.size}
+          data-type={f.type}
+          data-date={f.date.toFixed(4)}
+          data-rank={f.rank}
+        >
+          <div class="fb__y">
+            <div class="fb__p">
+              <div
+                class="fb__d"
+                style={`animation-name:drift-${f.drift};animation-duration:${f.dur}s;animation-delay:-${f.delay}s`}
+              >
+                <BirdThumb bird={f.bird} size={f.size} shape="circle" name={false} eager={f.rank < 12} />
+                <span class="fb__name">{f.english}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <div class="hub-wrap">
+      <div class="hub">
+        <p class="eyebrow">Birding checklist</p>
+        <h1 class="display">Flock</h1>
+        <p class="hub__stats meta">{stats}</p>
+        <ul class="ways">
+          {ways.map((w) => (
+            <li>
+              <a class="way" href={w.href} data-form={w.form}>{w.word}</a>
+            </li>
+          ))}
+        </ul>
+        {/* Absolutely positioned, so the hub box does not grow: flockView
+            measures the hole in the flock off .hub and a taller box would
+            open a band across the middle of the paper. */}
+        {ways.map((w) => (
+          <p class="hub__hint" data-for={w.form}>{w.hint}</p>
+        ))}
+      </div>
+    </div>
+  </div>
+
+  <BirdPanel birds={flock} />
+
+  <noscript>
+    <style>
+      .flock { position: static !important; opacity: 1 !important; height: auto !important; }
+      .flock__field {
+        position: static !important;
+        display: flex; flex-wrap: wrap; justify-content: center;
+        gap: 14px; padding: 0 var(--gutter) var(--page-bottom);
+      }
+      .fb, .fb--off, .fb__y { position: static !important; display: block !important; transform: none !important; }
+      .scaf, .hub__hint { display: none !important; }
+      .fb__d { animation: none !important; }
+      .hub-wrap { position: static !important; padding: var(--page-top) var(--gutter) var(--head-gap); }
+      body.is-home { overflow: auto !important; }
+    </style>
+  </noscript>
+</Base>
+
+<style>
+  /* Full-bleed paper. The page is the navigation, so it never scrolls. */
+  body.is-home { overflow: hidden; }
+
+  .flock {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 900ms var(--ease);
+  }
+  .flock.is-ready { opacity: 1; }
+  .flock.is-leaving .flock__field { pointer-events: none; }
+
+  .flock__field {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+
+  /* ---- the ghost scaffolds: paper, under the flock ----
+   *
+   * Class is `scaf`, not `ghost`: us.svg already ships a `.land-edge.ghost`
+   * and the two must not meet.
+   *
+   * flockView.ts publishes two boxes on #flock — --gx/--gy/--gw/--gh for the
+   * map (the US viewBox fitted uniformly, slid so the words land on Kansas)
+   * and --tx/--ty/--tw/--th for the time axis. Nothing here measures
+   * anything, and nothing here runs per frame.
+   */
+
+  .scaf {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 220ms var(--ease);
+  }
+
+  .scaf--map {
+    left: var(--gx, 0px);
+    top: var(--gy, 0px);
+    width: var(--gw, 0px);
+    height: var(--gh, 0px);
+  }
+
+  /* Its own box, round whatever the home clump turns out to be. */
+  .scaf--ink {
+    left: var(--rx, 0px);
+    top: var(--ry, 0px);
+    width: var(--rd, 0px);
+    height: var(--rd, 0px);
+  }
+
+  /* The artwork's own palette, overruled into one pencil line. Land, wash and
+     the water edge go; the coastline becomes --ink and the Great Lakes
+     --ink-faint, because the lakes are the one interior feature everybody
+     recognises. The dashed Hawaiʻi and Puerto Rico boxes and their two 11.5px
+     labels stay — they are what says "this is a printed map, not a diagram". */
+  .scaf--map {
+    --map-land: transparent;
+    --map-land2: transparent;
+    --map-water-edge: transparent;
+    --map-town: transparent;
+    --map-edge: var(--ink);
+    --map-water: var(--ink-faint);
+    --map-inset: var(--ink);
+    --map-label: var(--ink);
+    --map-ink: var(--ink);
+    font-family: var(--serif);
+  }
+
+  .scaf--ink { overflow: visible; }
+  .scaf--ink path {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 2;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .scaf--tl {
+    left: var(--tx, 0px);
+    top: var(--ty, 0px);
+    width: var(--tw, 0px);
+    height: var(--th, 100px);
+    opacity: 1; /* the parts inside fade, not the strip */
+  }
+
+  /* An HTML hairline, deliberately: pathLength / stroke-dasharray draw-ins are
+     unreliable in Safari, and a scaled 1px box is exact everywhere. It also
+     un-draws on the way out, which is a nicer exit than a fade. */
+  .scaf__axis {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50px;
+    height: 1px;
+    background: var(--rule);
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform 220ms var(--ease);
+  }
+
+  .scaf__tick {
+    position: absolute;
+    top: 51px;
+    width: 1px;
+    height: 6px;
+    background: var(--rule-soft);
+    opacity: 0;
+    transition: opacity 120ms var(--ease);
+  }
+  .scaf__tick.is-jan {
+    height: 12px;
+    background: var(--rule);
+  }
+
+  /* 28px below the axis, not the 14 the sketch asked for: a bird sitting on
+     its true date has its disc bottom about 25px down, and the earliest
+     bird in the record is within a fortnight of the first year number. */
+  .scaf__year {
+    position: absolute;
+    top: 78px;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    color: var(--ink-faint);
+    opacity: 0;
+    transition: opacity 120ms var(--ease);
+  }
+  /* 2024 sits at the very start of the axis; keep the numeral on the paper. */
+  .scaf__year:first-of-type { transform: translateX(-30%); }
+
+  .scaf--groups {
+    inset: 0;
+    width: auto;
+    height: auto;
+    opacity: 1;
+  }
+  .scaf__ring {
+    position: absolute;
+    border: 1px solid var(--rule);
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 120ms var(--ease);
+  }
+  .scaf__tag {
+    position: absolute;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    color: var(--ink-faint);
+    opacity: 0;
+    transition: opacity 120ms var(--ease);
+  }
+
+  /* ---- and when they come up. `:not(.flock--still)` is reduced motion:
+          the caption still appears there, the scaffolds do not. ---- */
+
+  .flock:not(.flock--still)[data-form='map'] .scaf--map {
+    opacity: 0.16;
+    transition: opacity 480ms var(--ease) 80ms;
+  }
+  .flock:not(.flock--still)[data-form='map'] .scaf--ink {
+    opacity: 0.32;
+    transition: opacity 480ms var(--ease) 80ms;
+  }
+
+  .flock:not(.flock--still)[data-form='timeline'] .scaf__axis {
+    transform: scaleX(1);
+    transition: transform 520ms var(--ease) 80ms;
+  }
+  .flock:not(.flock--still)[data-form='timeline'] .scaf__tick {
+    opacity: 1;
+    transition: opacity 250ms var(--ease) 300ms;
+  }
+  .flock:not(.flock--still)[data-form='timeline'] .scaf__year {
+    opacity: 1;
+    transition: opacity 250ms var(--ease) 350ms;
+  }
+
+  .flock:not(.flock--still)[data-form='groups'] .scaf__ring,
+  .flock:not(.flock--still)[data-form='groups'] .scaf__tag {
+    opacity: 1;
+    transition: opacity 250ms var(--ease) 350ms;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    /* a pale line on dark paper reads thinner than a dark line on cream */
+    .flock:not(.flock--still)[data-form='map'] .scaf--map { opacity: 0.22; }
+  }
+
+  /* A coastline a third of the size is a third as loud, and the paper grain
+     is the same size at every width. Phones get more ink. */
+  @media (max-width: 560px) {
+    .flock:not(.flock--still)[data-form='map'] .scaf--map { opacity: 0.26; }
+  }
+  @media (max-width: 560px) and (prefers-color-scheme: dark) {
+    .flock:not(.flock--still)[data-form='map'] .scaf--map { opacity: 0.34; }
+  }
+
+  /* ---- one bird: x / y+scale / parallax / drift, one per box ----
+   *
+   * Four boxes, and each one exists because two motions would otherwise have
+   * to share one property:
+   *
+   *   .fb      x + morph      transition, this file's --ease or a lagged one
+   *   .fb__y   y + scale      the same transition on the other axis
+   *   .fb__p   parallax       written every frame by the rAF loop
+   *   .fb__d   drift          an infinite CSS keyframe animation
+   *
+   * There was a fifth, .fb__z, carrying a depth-of-field blur at the rim of
+   * the wheel (B6). It read as some of the photographs being out of focus
+   * rather than as air, so it is gone: every bird on this page is sharp.
+   * Distance is said by size, by how densely the birds pack toward the
+   * middle, and by the parallax — all of which are still here.
+   *
+   * x and y are split (C4) because CSS interpolates one translate3d in a
+   * straight line, and a straight line from the rim to a formation runs
+   * through the words. Two boxes with two easings bend it into an arc:
+   * flockView.ts gives the leading axis --ease and the lagging one a slow
+   * start, per bird, only for the birds whose chord actually hits the type.
+   * Translations commute, so splitting them changes nothing else — but the
+   * scale has to ride on the *inner* box, or it would scale the y it is
+   * nested outside of.
+   */
+
+  .fb {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform: translate3d(-200px, 0, 0);
+    transform-origin: 50% 50%;
+    transition: transform var(--mdur, 900ms) var(--ease);
+    transition-delay: calc(var(--i, 0) * 2.5ms);
+  }
+  .fb--off { display: none; }
+  .fb:hover,
+  .fb:focus-within { z-index: 6; }
+
+  .fb__y {
+    transform: translate3d(0, -200px, 0);
+    transform-origin: 50% 50%;
+    transition: transform var(--mdur, 900ms) var(--ease);
+    transition-delay: calc(var(--i, 0) * 2.5ms);
+  }
+
+  .fb__y,
+  .fb__p,
+  .fb__d {
+    width: 100%;
+    height: 100%;
+  }
+  .fb__p { transform: translate3d(0, 0, 0); }
+
+  .fb__d {
+    position: relative;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+    animation-fill-mode: both;
+  }
+
+  .fb :global(.thumb) { width: 100%; }
+  /* a hairline ring in the bird's own type colour, only while you are on it */
+  .fb :global(.thumb__plate) {
+    transition: box-shadow var(--dur) var(--ease);
+  }
+  .fb:hover :global(.thumb__plate),
+  .fb:focus-within :global(.thumb__plate) {
+    box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--t, var(--rule));
+  }
+
+  .fb__name {
+    position: absolute;
+    top: calc(100% + 0.45em);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0 0.3em;
+    font-size: var(--fs-small);
+    line-height: 1.2;
+    white-space: nowrap;
+    color: var(--ink);
+    background: color-mix(in srgb, var(--paper) 82%, transparent);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast) var(--ease);
+  }
+  .fb:hover .fb__name,
+  .fb:focus-within .fb__name { opacity: 1; }
+
+  /* ---- the slow wheel: four shared paths, per-bird speed and phase ---- */
+
+  @keyframes drift-a {
+    0%   { transform: translate3d(0, 0, 0) rotate(0deg); }
+    33%  { transform: translate3d(7px, -10px, 0) rotate(1.6deg); }
+    66%  { transform: translate3d(-5px, -15px, 0) rotate(-1.2deg); }
+    100% { transform: translate3d(-9px, -3px, 0) rotate(0.6deg); }
+  }
+  @keyframes drift-b {
+    0%   { transform: translate3d(0, 0, 0) rotate(0deg); }
+    30%  { transform: translate3d(-8px, 6px, 0) rotate(-1.4deg); }
+    70%  { transform: translate3d(4px, 13px, 0) rotate(1.1deg); }
+    100% { transform: translate3d(10px, 2px, 0) rotate(-0.5deg); }
+  }
+  @keyframes drift-c {
+    0%   { transform: translate3d(0, 0, 0) rotate(0deg); }
+    40%  { transform: translate3d(11px, 5px, 0) rotate(1.1deg); }
+    75%  { transform: translate3d(3px, -9px, 0) rotate(-1.7deg); }
+    100% { transform: translate3d(-6px, -12px, 0) rotate(0.4deg); }
+  }
+  @keyframes drift-d {
+    0%   { transform: translate3d(0, 0, 0) rotate(0deg); }
+    35%  { transform: translate3d(-6px, -7px, 0) rotate(1.3deg); }
+    68%  { transform: translate3d(-12px, 4px, 0) rotate(-0.9deg); }
+    100% { transform: translate3d(2px, 11px, 0) rotate(1.5deg); }
+  }
+
+  /* ---- the words ---- */
+
+  .hub-wrap {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+  }
+
+  /* No side padding. flockView.ts measures the hole in the flock off this box,
+     so a gutter here is a hole two gutters wider than the words — which is
+     exactly what used to leave an empty band across the middle of the page.
+     `max-width` keeps the words off the paper's edge instead. */
+  .hub {
+    position: relative; /* the hint hangs off this, without growing it */
+    max-width: min(88vw, 34rem);
+    text-align: center;
+  }
+  .hub .eyebrow { margin-bottom: 0.9rem; }
+  .hub .display { letter-spacing: -0.03em; }
+
+  .hub__stats {
+    margin: 1.1rem 0 0;
+    letter-spacing: 0.14em;
+    color: var(--ink-soft);
+  }
+
+  /* While a word is held, the name and the numbers step back and the four
+     words keep all the ink — you are choosing, not reading a masthead. */
+  .hub .eyebrow,
+  .hub .display,
+  .hub__stats {
+    transition: opacity 300ms var(--ease);
+  }
+  .flock[data-form] .hub .eyebrow,
+  .flock[data-form] .hub .display,
+  .flock[data-form] .hub__stats {
+    opacity: 0.35;
+  }
+
+  /* Shrink-wrapped, not stretched to the hub: this box is also the keep-out
+     flockView holds the formation off, so a box wider than the sentence
+     would push the flock away from paper it could be using. */
+  .hub__hint {
+    position: absolute;
+    top: calc(100% + 14px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: min(90vw, 42rem);
+    text-align: center;
+    margin: 0;
+    font: italic var(--fs-small) / 1.3 var(--serif);
+    color: var(--ink-faint);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms var(--ease);
+  }
+  .flock[data-form='map'] .hub__hint[data-for='map'],
+  .flock[data-form='timeline'] .hub__hint[data-for='timeline'],
+  .flock[data-form='groups'] .hub__hint[data-for='groups'],
+  .flock[data-form='list'] .hub__hint[data-for='list'] {
+    opacity: 1;
+    transition: opacity 200ms var(--ease) 120ms;
+  }
+
+  .ways {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: clamp(1.1rem, 4vw, 2.6rem);
+    margin: clamp(2rem, 5vh, 3.2rem) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .way {
+    pointer-events: auto;
+    display: inline-block;
+    padding: 0.15em 0.1em;
+    font-size: var(--fs-lg);
+    text-decoration: none;
+    color: var(--ink-soft);
+    transition: color var(--dur) var(--ease);
+  }
+  /* The last B9 slot (DESIGN2 §4.3, row 1). The rule that wipes in under a way
+     is a mark, not text, so it may take the season colour where a word may
+     not: amber in September, cold blue in January. The word itself stays
+     --ink-soft → --ink, and the colour is never the only thing that says
+     "you are pointing at this" — the word darkens too.
+
+     Measured off the rendered pixels, 1 px on the grained paper, light theme:
+     autumn 3.86 · winter 3.84 · spring 3.10 · summer 2.15:1 (dark: 6.83 ·
+     7.05 · 7.92 · 10.06). Spring and summer are under 3:1 and allowed to be —
+     §4.1's marks-not-text rule — and both still draw as a coloured pencil
+     line rather than vanishing, so §4.4's fallback to `height: 2px` is not
+     needed. In print --accent is already #000, and under reduced motion the
+     global rule drops the wipe and the line simply appears. */
+  .way::after {
+    content: '';
+    display: block;
+    height: 1px;
+    margin-top: 0.3em;
+    background: var(--accent);
+    transform: scaleX(0);
+    transform-origin: 50% 50%;
+    transition: transform var(--dur) var(--ease);
+  }
+  .way:hover,
+  .way:focus-visible { color: var(--ink); }
+  .way:hover::after,
+  .way:focus-visible::after { transform: scaleX(1); }
+
+  @media (max-width: 560px) {
+    .fb__name { font-size: var(--fs-micro); }
+  }
+
+  /* Reduced motion: one pleasant static composition. flockView.ts skips the
+     morph and the parallax; global.css has already stopped the drift. */
+  @media (prefers-reduced-motion: reduce) {
+    .flock { transition: none; }
+    .fb__d { animation: none; }
+  }
+</style>
+
+<script>
+  import '../lib/flockView';
+</script>

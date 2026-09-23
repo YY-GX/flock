@@ -1,0 +1,1146 @@
+/* ---------------------------------------------------------------
+   bird_web — paper ground, quiet serif, no chrome.
+
+   This is the ONE palette / type scale / spacing scale for the whole
+   site. Every view (home, map, timeline, groups, list) reads tokens
+   from here. Do not invent local colours — if something is missing,
+   add it here so all five views stay in one key.
+
+   Sections
+     1. tokens (light)
+     2. tokens (dark)
+     2b. the season you are standing in (--accent / --accent-band)
+     3. reset + base
+     4. page furniture utilities (.page / .eyebrow / .display / .lede)
+     5. the print's edge (the site's one non-utility global rule)
+     6. view transitions
+     7. paper (print) — the life list and one bird, on a sheet
+   --------------------------------------------------------------- */
+
+/* ---------------- 1. tokens (light) ---------------- */
+
+:root {
+  color-scheme: light dark;
+
+  /* ground + ink */
+  --paper: #faf8f3;
+  /* The well a photograph sits in. It used to be a separate board — a warm
+     cream card (#f8f1e0) the print was mounted on — and next to the page it
+     read as a yellow patch rather than as card stock. There is no board any
+     more: a photograph lies on the page, and this token is now *the page*,
+     the same base colour and the same grain the root paints in §3, so the
+     seam round a mat is the tile phase and nothing else.
+
+     ⚠ It is a whole `background` value, not a colour, because that is the
+     only way one token can carry an image as well as a base — every user
+     writes `background: var(--paper-sunk)` and gets both. Do not put it in
+     `background-color:` or `color-mix()`; those want --paper. (Users today:
+     BirdPanel's mat, the bird page's plate and its filmstrip, BirdThumb's
+     plate, MapPin's disc, /days' hollow thumb.) */
+  --paper-sunk: var(--paper-ground) var(--grain) repeat 0 0 /
+    var(--grain-size) var(--grain-size);
+  --paper-raised: #fffdf8;
+  /* Three ink voices, all legible. Every one of them carries words
+     somewhere (faint runs the eyebrows, counts, dates and the back
+     links), so all three clear WCAG AA 4.5:1 on --paper AND on
+     --paper-raised. (--paper-sunk was the third and darkest ground; it is
+     the paper itself now, so there are two.) Measured on the composited
+     grained paper, not on the token: ink 15.47:1 · soft 6.92:1 ·
+     faint 4.94:1 (dark: 15.13 · 7.90 · 5.50). Don't lighten --ink-faint
+     again — if you want a whisper, use --rule / --rule-soft, which are
+     for hairlines and dots, not for type. */
+  --ink: #23201b;
+  --ink-soft: #5c564d;
+  --ink-faint: #746c5f;
+  --rule: rgba(35, 32, 27, 0.12);
+  --rule-soft: rgba(35, 32, 27, 0.07);
+
+  /* the cumulative climb on the timeline */
+  --curve: #3e4a42;
+  --curve-fill-top: rgba(62, 74, 66, 0.11);
+  --curve-fill-bottom: rgba(62, 74, 66, 0);
+
+  /* 9 bird types — earthy, moderate chroma, distinguishable at 5px.
+     Index order is TYPE_ORDER in src/lib/flock.ts; use typeVar(type). */
+  --t-1: #b5793c; /* Perching */
+  --t-2: #2f7c8e; /* Water */
+  --t-3: #6b84b5; /* Wading & Shorebirds */
+  --t-4: #9b4a3f; /* Raptors */
+  --t-5: #6d8c4b; /* Tree-Climbers */
+  --t-6: #7c6b57; /* Landfowls */
+  --t-7: #9c8fa6; /* Doves & Pigeons */
+  --t-8: #3e9e7b; /* Swifts & Hummingbirds */
+  --t-9: #c9a227; /* Specialists */
+  --t-other: #8a857c;
+
+  /* 4 seasons — solid ink for marks/labels … */
+  --season-spring: #7a9860;
+  --season-summer: #cea856;
+  --season-autumn: #be682c;
+  --season-winter: #688298;
+  /* … and the washed version used as a background band */
+  --band-spring: rgba(122, 152, 96, 0.14);
+  --band-summer: rgba(206, 168, 86, 0.15);
+  --band-autumn: rgba(190, 104, 44, 0.14);
+  --band-winter: rgba(104, 130, 152, 0.13);
+
+  --scrim: rgba(28, 26, 22, 0.42);
+  --lift: 0 24px 80px -28px rgba(0, 0, 0, 0.45);
+  --lift-sm: 0 6px 22px -10px rgba(0, 0, 0, 0.5);
+  /* A photograph mounted on the paper: a hairline round the print and the
+     faintest lift under it. This is the ONE card edge on the site, and now
+     it really is one — the filled plates in <BirdThumb /> and, since the
+     mat became the page, the two big mounted photographs as well (§5).
+     Hollow frames (a bird with no photo) keep their inset --rule /
+     --rule-soft and no lift, so the two read as "a print" and "an empty
+     slot", not two kinds of box.
+
+     There used to be a --mat-bevel here too: four layers drawing a 45° cut
+     through a board, a lit face along the cut and the print standing proud
+     of it. Two of those four only existed to hold the board's colour apart
+     from the page's. With one material there is no cut and no board, so the
+     token is gone and both photographs take the edge below. */
+  --plate-edge: 0 0 0 1px var(--rule);
+  --plate-lift: 0 1px 2px rgba(35, 32, 27, 0.06), 0 8px 18px -12px rgba(35, 32, 27, 0.35);
+
+  /* --- the empty specimen slot ----------------------------------------
+     43 birds have been seen and never photographed. Their frame is the
+     opposite of a mounted print: a print is *lifted* off the paper
+     (--plate-edge + --plate-lift), an empty slot is *pressed into* it —
+     a whisper of plate tone, light falling down the sunken face, a shadow
+     under the top edge and a lip of light along the bottom outside. It is
+     an impression, deliberate and finished; nothing here should ever fill
+     in, which is what keeps it from reading as a skeleton.
+
+     On light stock the *floor* of the well is held at paper luminance and
+     the press is carried entirely by its edges. That is not only taste: a
+     scientific name sits 24% down the card in --ink-faint, and toning the
+     floor down — the first version of this, four levels darker — took that
+     line from 4.88:1 to 4.75:1 on the real pixels. Edges cost nothing. */
+  --ghost-fill: linear-gradient(
+    to bottom,
+    rgba(35, 32, 27, 0.06) 0%,
+    rgba(35, 32, 27, 0) 5%,
+    rgba(255, 255, 255, 0) 68%,
+    rgba(255, 255, 255, 0.26) 100%
+  );
+  --ghost-press:
+    inset 0 0 0 1px var(--rule),
+    inset 0 3px 5px -2px rgba(35, 32, 27, 0.17),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.6),
+    0 1px 0 rgba(255, 255, 255, 0.75);
+  /* hovered: pressed a little deeper, and the rule picks up the bird's type */
+  --ghost-press-hover:
+    inset 0 0 0 1px var(--t, var(--rule)),
+    inset 0 4px 7px -2px rgba(35, 32, 27, 0.22),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.66),
+    0 1px 0 rgba(255, 255, 255, 0.8);
+  /* the name struck into the card: a lip of light under the letterform.
+     A shadow only — it never lightens the glyph, so contrast is unchanged. */
+  --ghost-emboss: 0 1px 0 rgba(255, 255, 255, 0.62);
+
+  /* --- paper grain -----------------------------------------------------
+     The ground is called paper everywhere on this site and was a flat
+     fill; the maps already wobble through feTurbulence, so the flat
+     background was the one thing giving it away.
+
+     One tiled SVG — two turbulence layers, warm dark fibre and a lighter
+     fleck over it, stitched so the 220px tile has no seam. It is the root
+     element's background, so it sits *behind* every photograph and can
+     never tint one; it scrolls with the document (no attachment: fixed),
+     so it costs no repaint; and it is ~700 bytes of CSS with no request.
+
+     --paper-ground, not --paper, is what the root paints: the grain has a
+     mean of its own, so the base is pre-compensated to land the composite
+     back on --paper. That is why --ink-faint still measures 4.88:1 on the
+     real, resolved pixels and not only on the token. Re-measure the
+     composite, not the base, if you ever retune this. */
+  --paper-ground: #fffdf8;
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='a' x='0%25' y='0%25' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0.16 0 0 0 0 0.13 0 0 0 0 0.08 0 0 0 0.034 0'/%3E%3C/filter%3E%3Cfilter id='b' x='0%25' y='0%25' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='3' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 0.99 0 0 0 0 0.95 0 0 0 0.024 0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23a)'/%3E%3Crect width='220' height='220' filter='url(%23b)'/%3E%3C/svg%3E");
+  --grain-size: 220px;
+
+  /* type */
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, ui-serif, serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* One display face, for `.display` only — the home wordmark and each
+     view's <h1>. A Didone is what a 19th-century plate was titled in, and
+     it is a different register from the old-style text face rather than a
+     competitor to it. Self-hosted and subset (§3); the fallback is the
+     text face, so nothing depends on the file arriving. */
+  --display-serif: "Bodoni Moda Display", var(--serif);
+  /* The second script. Every one of the 238 photographed birds carries a
+     Chinese name, and a Chinese bird painting sets its inscription in a
+     Song-style face — the CJK counterpart of the old-style Latin serif that
+     --serif already is. It needs its own token because neither of the other
+     two can do the job: --display-serif is Bodoni Moda, subset to 110 ASCII
+     glyphs and with no CJK at all, and --serif's stack is Latin text faces
+     whose CJK fallback is whatever the OS happens to pick (usually a sans on
+     Windows). Named faces first, `serif` last — on every OS the generic
+     resolves to a CJK-capable face for CJK codepoints, so nothing depends on
+     the file being installed. Set `lang="zh-Hans"` on the element too, so the
+     browser picks Simplified glyph forms. */
+  --serif-cjk: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC",
+    "SimSun", "Songti TC", serif;
+
+  /* type scale — sans sizes are for labels/meta, serif for names + prose */
+  --fs-micro: 0.68rem;  /* eyebrows, dt labels, axis ticks */
+  --fs-tiny: 0.74rem;   /* legends */
+  --fs-small: 0.86rem;  /* captions, "no photograph yet" */
+  --fs-base: 0.95rem;   /* dd values, thumbnail names */
+  --fs-body: 1.02rem;   /* lede + running prose */
+  --fs-lg: 1.25rem;
+  --fs-name: clamp(1.6rem, 3.2vw, 2.15rem);   /* a bird's name in the panel */
+  --fs-display: clamp(2.6rem, 7vw, 4.4rem);   /* the one word at the top of a view */
+
+  --track-wide: 0.2em;  /* eyebrows */
+  --track-label: 0.12em;/* dt labels */
+
+  /* the compass, bottom-left, is fixed and sits over every view.
+     These describe its real footprint so layouts can stay off it:
+     inset from the corner + the rose itself + its paper halo. */
+  --compass-inset: clamp(10px, 2.2vw, 26px);
+  --compass-size: 90px;               /* 78px below 760px, see §2 */
+  --compass-halo: 18px;
+  /* How far the compass reaches in from the bottom-left corner — the same
+     on both axes, since the rose is square: use it as a bottom inset, or as
+     a left inset for anything pinned low (a sticky column's footer, say).
+     ~146px: the rose, its halo, and 12px of air so type never grazes it. */
+  --compass-safe: calc(var(--compass-inset) + var(--compass-size) + var(--compass-halo) + 12px);
+
+  /* spacing */
+  --gutter: clamp(20px, 6vw, 88px);   /* left/right page margin, all views */
+  --page-top: clamp(40px, 7vh, 96px);
+  /* never smaller than the compass's reach, so the last line of any view
+     clears the rose instead of hiding under it */
+  --page-bottom: max(clamp(28px, 5vh, 56px), var(--compass-safe));
+  --head-gap: clamp(32px, 6vh, 72px); /* header block -> content */
+
+  /* motion — set to 0.01ms wholesale under reduced motion, see §3 */
+  --ease: cubic-bezier(0.22, 0.75, 0.3, 1);
+  --dur-fast: 160ms;
+  --dur: 260ms;
+  --dur-slow: 480ms;
+}
+
+/* ---------------- 2. tokens (dark) ---------------- */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #131311;
+    /* No --paper-sunk here on purpose. It is a background *value* built out
+       of --paper-ground and --grain (§1), both of which this block
+       re-declares, so the mat follows the dark paper without a second
+       definition — which is the point: there is one material. */
+    --paper-raised: #1f1e1a;
+    --ink: #ece6da;
+    /* same three voices, same AA floor: 13.4 / 7.0 / 4.9 on --paper-raised,
+       the lightest dark ground (the panel sheet) */
+    --ink-soft: #b0a798;
+    --ink-faint: #928a7c;
+    --rule: rgba(236, 230, 218, 0.16);
+    --rule-soft: rgba(236, 230, 218, 0.08);
+
+    --curve: #cdd8c9;
+    --curve-fill-top: rgba(205, 216, 201, 0.14);
+    --curve-fill-bottom: rgba(205, 216, 201, 0);
+
+    --t-1: #d69b5e;
+    --t-2: #58aec0;
+    --t-3: #93aad8;
+    --t-4: #c97a6c;
+    --t-5: #97b872;
+    --t-6: #a8927a;
+    --t-7: #bfb1c9;
+    --t-8: #64c6a2;
+    --t-9: #e0be55;
+    --t-other: #a9a399;
+
+    --season-spring: #8cb46e;
+    --season-summer: #dcba68;
+    --season-autumn: #d48c4a;
+    --season-winter: #84a2be;
+    --band-spring: rgba(140, 180, 110, 0.10);
+    --band-summer: rgba(220, 186, 104, 0.10);
+    --band-autumn: rgba(212, 140, 74, 0.09);
+    --band-winter: rgba(132, 162, 190, 0.10);
+
+    --scrim: rgba(8, 8, 7, 0.62);
+    --lift: 0 24px 80px -28px rgba(0, 0, 0, 0.8);
+    --lift-sm: 0 6px 22px -10px rgba(0, 0, 0, 0.75);
+    /* on dark paper the shadow disappears, so the hairline carries the edge */
+    --plate-edge: 0 0 0 1px var(--rule);
+    --plate-lift: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 18px -12px rgba(0, 0, 0, 0.7);
+
+    /* Dark card is not inverted light card. A deboss in black board is a
+       *darker* well, not a brighter panel, and the floor here stays under
+       --paper the whole way down: a broad light lift along the bottom
+       raised the ground under the `not yet seen` line and cost it
+       5.45:1 → 5.43:1. The one lit face is the 1px inset in --ghost-press,
+       which is where the cut actually is. */
+    --ghost-fill: linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.34) 0%,
+      rgba(0, 0, 0, 0.2) 18%,
+      rgba(0, 0, 0, 0.2) 100%
+    );
+    --ghost-press:
+      inset 0 0 0 1px var(--rule),
+      inset 0 2px 4px -1px rgba(0, 0, 0, 0.55),
+      inset 0 -1px 0 rgba(236, 230, 218, 0.07),
+      0 1px 0 rgba(236, 230, 218, 0.05);
+    --ghost-press-hover:
+      inset 0 0 0 1px var(--t, var(--rule)),
+      inset 0 3px 6px -1px rgba(0, 0, 0, 0.66),
+      inset 0 -1px 0 rgba(236, 230, 218, 0.09),
+      0 1px 0 rgba(236, 230, 218, 0.06);
+    --ghost-emboss: 0 1px 0 rgba(0, 0, 0, 0.55);
+
+    /* Dark stock has its own tooth: coarser, and the fleck that shows is
+       the one catching light, not the fibre shadow. The base is pulled a
+       shade under --paper for the same reason as in §1 — the composite
+       has to land back on #131311 so --ink-faint still measures 5.45:1. */
+    --paper-ground: #0f0f0d;
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='a' x='0%25' y='0%25' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.62' numOctaves='4' stitchTiles='stitch' seed='5'/%3E%3CfeColorMatrix values='0 0 0 0 0.85 0 0 0 0 0.82 0 0 0 0 0.73 0 0 0 0.034 0'/%3E%3C/filter%3E%3Cfilter id='b' x='0%25' y='0%25' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch' seed='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23a)'/%3E%3Crect width='220' height='220' filter='url(%23b)'/%3E%3C/svg%3E");
+    --grain-size: 260px;
+  }
+}
+
+/* the compass shrinks on a phone (see Compass.astro), so its safe area does */
+@media (max-width: 760px) {
+  :root { --compass-size: 78px; }
+}
+
+/* ---------------- 2b. the season you are standing in ----------------
+
+   `Base.astro` puts data-season on <html>: the build month server-side, the
+   visitor's own month as soon as the inline script runs. Arrive in September
+   and the site's state marks are amber; arrive in January and they are a cold
+   blue. Meteorological seasons, northern hemisphere, matching SEASON_OF_MONTH
+   in src/lib/timeline.ts so the accent and the timeline's bands never
+   disagree about what month it is.
+
+   --accent is for hairlines, small fills and dots ONLY. Measured on --paper,
+   light theme: autumn 3.80:1, winter 3.78:1, spring 3.05:1, summer 2.11:1.
+   All four clear 6.7:1 in dark. So in light mode a season colour may be an
+   underline, a chip rule or a 6px dot, and it may never be a word, an icon
+   that carries meaning on its own, or a focus ring — summer would not hold
+   3:1. Anything that must be read stays --ink / --ink-soft / --ink-faint.
+
+   No ground is ever tinted. There is one ground now — the grained paper,
+   which the mat and the plates share — and the grain compensation in §1 was
+   tuned to its current base; a seasonal wash over it would spend the margin
+   --ink-faint is holding (4.92:1 measured on the composited pixels).
+
+   --accent-band is the washed twin, for a background band that wants to say
+   "this is the season you are in" — the timeline's own bands. Nothing in this
+   file consumes it; it is here so that when Timeline.astro does, there is one
+   definition and not a second palette. */
+
+:root {
+  --accent: var(--ink);
+  --accent-band: transparent;
+}
+:root[data-season="spring"] { --accent: var(--season-spring); --accent-band: var(--band-spring); }
+:root[data-season="summer"] { --accent: var(--season-summer); --accent-band: var(--band-summer); }
+:root[data-season="autumn"] { --accent: var(--season-autumn); --accent-band: var(--band-autumn); }
+:root[data-season="winter"] { --accent: var(--season-winter); --accent-band: var(--band-winter); }
+
+/* ---------------- 3. reset + base ---------------- */
+
+/*
+ * The one display face. Bodoni Moda (SIL OFL 1.1, licence shipped beside
+ * the file at public/fonts/bodoni-moda-OFL.txt), the 11pt optical cut so
+ * the hairlines survive the 2.6rem end of --fs-display on a phone.
+ *
+ * Self-hosted on purpose: this site is static and offline-friendly, and a
+ * third-party font request would be a render-blocking regression. Subset
+ * from the 14.5 KB Latin cut to the 110 glyphs `.display` can actually
+ * contain — ASCII plus a handful of punctuation — which is 8.5 KB. Place
+ * names include 金玉公寓; CJK simply falls through to --serif, as does
+ * everything else until the file lands.
+ */
+@font-face {
+  font-family: "Bodoni Moda Display";
+  src: url("/fonts/bodoni-moda-display.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  /* Reserve the classic scrollbar's gutter at all times. The bird panel
+     locks the page with overflow:hidden (src/lib/panel.ts); without this
+     the reclaimed scrollbar width reflowed every width-driven view by
+     15px on open and back again on close. Also keeps a short view and a
+     long one the same width, so routes don't jump into each other.
+     Costs nothing where the OS draws overlay scrollbars. */
+  scrollbar-gutter: stable;
+
+  /* The paper itself. It lives on the root, not on <body>, so it paints
+     the whole canvas — including the overscroll area — and so it stays
+     behind every view. <body> below must therefore stay transparent, or
+     it would cover the grain with a flat fill again. */
+  background-color: var(--paper-ground);
+  background-image: var(--grain);
+  background-repeat: repeat;
+  background-size: var(--grain-size) var(--grain-size);
+}
+
+body {
+  margin: 0;
+  /* see html above — the ground is painted on the root */
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+img { display: block; max-width: 100%; }
+
+/* author-level img { display: block } would otherwise beat the UA [hidden] rule */
+[hidden] { display: none !important; }
+
+a { color: inherit; }
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The first tab stop on every page (Base.astro). Off-screen until it is
+   focused, then it steps onto the paper at the top-left. Every view puts
+   dozens of birds before its own words in the DOM — this is the way past
+   them. */
+.skip-link {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60; /* over the panel (50) and the compass (45) */
+  transform: translateY(-110%);
+  padding: 0.7em 1.1em;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--fs-small);
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  box-shadow: 0 0 0 1px var(--rule);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.skip-link:focus { transform: none; }
+
+/* the <main> the skip link lands on takes focus programmatically only */
+main:focus { outline: none; }
+
+/* Deliberately NOT --accent: a focus ring has to hold 3:1 against the paper
+   and --season-summer measures 2.11:1. The ring is the one state mark on the
+   site that is load-bearing, so it keeps ink in every month. */
+:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 3px; }
+
+/* A selection in the colour of the month — the cheapest of the seasonal
+   slots and the one that reaches every page. The explicit `color` is not
+   decoration: without it the selected run keeps its own ink, and a line of
+   --ink-faint under a 24% autumn wash measures 3.67:1. Forcing --ink puts
+   every selected word between 8.9:1 and 13:1 in both themes, which is better
+   than the browser default it replaces. */
+::selection {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------- 4. page furniture ----------------
+   Every view opens the same way: eyebrow, one big word, a lede.
+   Use these so the five views feel like one book. All optional. */
+
+.page {
+  padding: var(--page-top) 0 var(--page-bottom);
+}
+
+.page__head {
+  max-width: 62ch;
+  padding: 0 var(--gutter);
+  margin-bottom: var(--head-gap);
+}
+
+.eyebrow {
+  margin: 0 0 1.4rem;
+  font-family: var(--sans);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* The one big word at the top of a view, and the only thing on the site
+   that uses the display face. Everything else — names, prose, captions,
+   the panel, the maps — stays on --serif. The tracking opens up from
+   -0.025em: that negative was drawn for the old-style text face, and a
+   Didone's vertical stress needs the air back. */
+.display {
+  margin: 0;
+  font-family: var(--display-serif);
+  font-size: var(--fs-display);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.lede {
+  margin: 1.2rem 0 0;
+  max-width: 46ch;
+  font-size: var(--fs-body);
+  color: var(--ink-soft);
+}
+
+/* small sans meta line — counts, "18 places", "scroll sideways" */
+.meta {
+  font-family: var(--sans);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* a scientific name, anywhere */
+.genus {
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+/* The other half of the seasonal accent, and the half that is tied to the
+   record rather than to the clock: a small dot before a date, in the colour
+   of the season that date fell in. --accent says what month the *visitor* is
+   in; this says what month the *bird* was in.
+
+   It is a 6px mark beside the date it belongs to and never the only carrier
+   of anything — the date is written out in words right next to it — so the
+   3:1 floor does not apply, which matters because 126 of the 238 birds are
+   June–August and --season-summer is 2.11:1 on paper. Set --s to one of the
+   four --season-* tokens; with none set it falls back to a rule hairline and
+   reads as an ordinary bullet. */
+.season-dot {
+  display: inline-block;
+  /* 6px flat, not an em: it sits beside a --fs-micro eyebrow in the panel and
+     a --fs-base value on a bird page, and it should be the same mark in both */
+  width: 6px;
+  height: 6px;
+  margin-right: 0.55em;
+  border-radius: 50%;
+  background: var(--s, var(--rule));
+  /* the dot is a picture of the season, not a letter on the date's baseline */
+  vertical-align: 0.04em;
+}
+
+/* ---------------- 5. the print's edge ----------------
+   The two places on the site where a photograph is shown large: the bird
+   panel's plate and the hero on /birds/<slug>. Both are a fixed-height
+   well of --paper-sunk with the photograph centred in it at its true
+   ratio — and --paper-sunk is the paper, so what surrounds the print is
+   the page, not a board.
+
+   That is why this is one line and not four. It used to draw a mat's 45°
+   bevel: a cut edge, a lit face along the cut, and the print standing
+   proud of the board. The lit face was the board's own edge catching
+   light, and it only read as anything because the board was a different
+   colour from the page; with one material it had nothing to describe.
+   What is left is what a photograph lying on paper actually does — a
+   hairline round it and the faintest lift under it — which is the same
+   edge a <BirdThumb /> plate carries. One material, one card edge.
+
+   One rule here rather than a copy in each component, and deliberately
+   loose about the markup: if either component renames its parts the edge
+   quietly stops applying and the print is flat, which is where it
+   started. Nothing depends on it. */
+
+.panel__mat img,
+.bird__plate .bird__photo {
+  box-shadow: var(--plate-edge), var(--plate-lift);
+}
+
+/* ---------------- 6. view transitions ----------------
+   The flock keeps its identity across routes: an element carrying
+   view-transition-name: bird-<slug> in the old page morphs into the
+   element carrying the same name in the new one. See src/lib/README.md.
+
+   Nothing here is required for the site to work — without View
+   Transitions support the browser just does a normal navigation. */
+
+@view-transition { navigation: auto; }
+
+::view-transition-group(root) {
+  animation-duration: 320ms;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  /* a quiet cross-fade under the birds, no slide */
+  animation-duration: 260ms;
+  mix-blend-mode: normal;
+}
+
+/* birds glide; the paper underneath just fades */
+::view-transition-group(*) {
+  animation-timing-function: var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* ---------------- 7. paper (the real kind) ----------------
+
+   The site is called paper all the way through and has never been printable.
+   It is now: /list comes out as a contact sheet of the whole cabinet with the
+   empty slots still in it, and /birds/<slug> as a one-sheet specimen record.
+
+   Four things had to be true before any of it worked.
+
+   1. **Dark mode prints.** `prefers-color-scheme: dark` is still true at the
+      printer, so a life list printed off a dark desktop came out as white ink
+      on a black sheet — 238 solid black cells. Everything below re-declares
+      the ground and the ink for print, inside `@media print` only, so the two
+      measured on-screen palettes (--ink-faint 4.93:1 light / 5.49:1 dark, the
+      compass at 3.24:1 / 4.25:1) are untouched. Nothing here leaks upward.
+
+   2. **Shadows do not print.** A browser drops background-colour,
+      background-image and box-shadow unless the reader has ticked "background
+      graphics", and most never do. That takes out the paper grain (fine, it
+      would only grey the sheet), the plates' --plate-edge hairline, and — the
+      one that matters — the entire ghost frame, which is nothing *but*
+      --ghost-fill and --ghost-press. 43 empty specimen slots would have
+      printed as 43 patches of nothing.
+
+      Borders are not background graphics and always print. So on paper the
+      press becomes a drawn frame: a hairline all round, a heavier rule under
+      the top edge where the shadow of the cut used to be, and a tick box in
+      the corner. That last one is not decoration — an empty slot on a sheet
+      of paper you are carrying wants somewhere to put the pencil.
+
+   3. **The grain's base must not be printed.** --paper-ground is
+      pre-compensated for the grain compositing over it (see §1); with the
+      grain dropped, painting the base alone would put a flat #fffdf8 — or,
+      in dark mode, near-black — across every sheet. The ground is set to
+      plain white here and the grain to none, together, never one or the
+      other.
+
+   4. **The screen's furniture is not paper's.** The compass, the two skip
+      links, the filter drawer, the pager arrows, the zoom button and the
+      prev/next links all go. What stays is what you would want in your hand.
+
+   5. **Almost everything here is !important**, which is not laziness. Astro
+      scopes a component's own `<style>` by appending a `[data-astro-cid-…]`
+      attribute to its selectors, so `.cabinet__ghosthead` in list.astro
+      outranks `.cabinet__ghosthead` from this file by one attribute
+      selector. Without the flag roughly half of the block below lost
+      silently — the first proof was 160mm of blank paper above the empty
+      frames, because a screen margin measured in `12vh` had quietly won.
+      A print override sheet is exactly the case the flag is for.
+
+   Scientific names and dates are deliberately louder here than on screen: on
+   a printed record the binomial is the identifier, and a life list without
+   its dates is a poster. */
+
+@media print {
+  :root {
+    /* white sheet, black ink — see note 1 and note 3 above */
+    --paper: #fff;
+    --paper-ground: #fff;
+    /* --paper-sunk is a background value built from the two above, so it
+       would already come out white here; it is restated as a plain colour
+       so a sheet never depends on that chain resolving. */
+    --paper-sunk: #fff;
+    --paper-raised: #fff;
+    --grain: none;
+    --ink: #000;
+    --ink-soft: #2b2b2b;
+    --ink-faint: #4a4a4a;
+    --rule: #8c8c8c;
+    --rule-soft: #c2c2c2;
+
+    /* nothing lifts off a sheet of paper */
+    --lift: none;
+    --lift-sm: none;
+    --plate-edge: none;
+    --plate-lift: none;
+    --ghost-fill: none;
+    --ghost-press: none;
+    --ghost-press-hover: none;
+    --ghost-emboss: none;
+    --scrim: transparent;
+
+    /* No month on a sheet of paper. The seasonal accent is a screen state
+       mark — an underline, a chip rule, a selection — and every one of its
+       slots is either gone here or already black. A printer that has been
+       told to drop background graphics would drop the tint anyway and leave
+       whichever slot behind with no mark at all, so it goes to ink instead
+       of to a colour. --accent-band follows: a band is a ground, and grounds
+       are white here (note 3). */
+    --accent: #000;
+    --accent-band: transparent;
+
+    /* the compass is gone, so nothing has to keep clear of it */
+    --compass-safe: 0px;
+    --gutter: 0px;
+    --page-top: 0px;
+    --page-bottom: 0px;
+    --head-gap: 8mm;
+
+    /* points, so the sheet is the same at any paper size */
+    --fs-micro: 6.5pt;
+    --fs-tiny: 7pt;
+    --fs-small: 7.5pt;
+    --fs-base: 8.5pt;
+    --fs-body: 9.5pt;
+    --fs-lg: 12pt;
+    --fs-name: 22pt;
+    --fs-display: 26pt;
+  }
+
+  /* Let the reader's paper choice win; only the margin is ours. The extra
+     millimetres at the foot are for the browser's own footer. */
+  @page {
+    margin: 14mm 12mm 16mm;
+  }
+
+  html {
+    background: #fff !important;
+    background-image: none !important;
+  }
+
+  body {
+    font-size: 9.5pt !important;
+    line-height: 1.45 !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+
+  /* ---- what does not come to the printer ---- */
+
+  /* The season dot is a background-colour circle, so a printer with
+     background graphics off drops it and leaves a 6px hole in front of every
+     date. It says nothing the date beside it does not already say — the date
+     is written out in words — so it comes off the sheet on purpose rather
+     than by accident. Same for the vertical inscription: a scroll's margin
+     is a screen luxury, and on paper the Chinese name goes back on the name
+     line where a specimen label puts it (see .bird__gloss below). */
+  .season-dot,
+  .bird__inscription,
+  .skip-link,
+  .compass,
+  #panel,
+  .cabinet__bar,
+  .cabinet__none,
+  .bird__page,
+  .bird__count,
+  .bird__zoombtn,
+  .bird__nav,
+  .tl__hint,
+  [data-plate-zoom],
+  [data-plate-step] {
+    display: none !important;
+  }
+
+  /* A link on paper is just words. No underlines, no colour, and no
+     `[href]::after { content: attr(href) }` — 281 slugs printed in the
+     margin is noise, and every one of them is derivable from the name. */
+  a {
+    color: inherit !important;
+    text-decoration: none !important;
+    /* the site underlines with a border, not with text-decoration */
+    border-bottom-width: 0 !important;
+  }
+
+  /* The document itself has to be allowed to run on past one screen.
+     Deliberately *not* a universal `overflow: visible` — the plates clip
+     their photographs to the 3:4 window with overflow:hidden, and unclipping
+     them let every landscape frame spill a centimetre into its neighbour. */
+  html,
+  body {
+    overflow: visible !important;
+    scrollbar-gutter: auto !important;
+    height: auto !important;
+  }
+
+  .page {
+    padding: 0 !important;
+  }
+
+  .page__head {
+    max-width: none !important;
+    padding: 0 !important;
+    margin-bottom: 7mm !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .display {
+    font-size: var(--fs-display) !important;
+    letter-spacing: 0 !important;
+  }
+
+  .lede {
+    max-width: 62ch !important;
+    margin-top: 2mm !important;
+  }
+
+  .eyebrow {
+    margin-bottom: 2mm !important;
+  }
+
+  h1, h2, h3 {
+    break-after: avoid !important;
+  }
+
+  p {
+    orphans: 3 !important;
+    widows: 3 !important;
+  }
+
+  /* ---- /: the flock has to land before it can be printed ----
+
+     On screen the home page is a fixed, clipped viewport composition: 58
+     birds circling a hole in the middle, `position: fixed; inset: 0;
+     overflow: hidden`. Printed as it stands, that is one page of 58
+     overlapping birds and nothing else (AUDIT2 §6.3). The page already
+     knows what it looks like standing still — the <noscript> block in
+     src/pages/index.astro says it for a reader with no JavaScript — so
+     paper gets the same answer: the field unpins itself and wraps.
+
+     Kept in step with that block by hand; it is nine lines and it belongs
+     to the view, not here, but a print rule cannot live inside <noscript>. */
+
+  .flock {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+    opacity: 1 !important;
+    height: auto !important;
+    /* the masthead is last in the DOM because on screen it is centred over
+       the birds; on paper it is the head of the sheet */
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .flock__field {
+    position: static !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    gap: 4mm !important;
+    padding: 0 !important;
+  }
+
+  .fb,
+  .fb--off,
+  .fb__y {
+    position: static !important;
+    display: block !important;
+    transform: none !important;
+  }
+
+  .scaf,
+  .hub__hint {
+    display: none !important;
+  }
+
+  .hub-wrap {
+    order: -1 !important;
+    position: static !important;
+    padding: 0 0 7mm !important;
+    break-after: avoid !important;
+  }
+
+  .fb__d {
+    animation: none !important;
+  }
+
+  /* ---- /list: the cabinet as a contact sheet ----
+
+     Five plates across a portrait sheet at 30mm, which is about the size a
+     field guide prints a bird at, and the whole 238 lands in roughly a
+     dozen sheets. A cell is never allowed to break across a page, so a
+     photograph and the name under it always stay together. */
+
+  .cabinet__grid,
+  .cabinet__ghostgrid {
+    grid-template-columns: repeat(auto-fill, minmax(30mm, 1fr)) !important;
+    gap: 6mm 4mm !important;
+    padding: 0 !important;
+  }
+
+  .cabinet__cell,
+  .cabinet__ghostcell,
+  .thumb,
+  .ghost {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* The hairline round a print is --plate-edge, which is a box-shadow and
+     will not print. Drawn instead. */
+  .thumb__plate {
+    background: none !important;
+    box-shadow: none !important;
+    border: 0.4pt solid var(--rule) !important;
+  }
+
+  .thumb__plate img {
+    transition: none !important;
+    transform: none !important;
+  }
+
+  .thumb__caption {
+    padding-top: 1.2mm !important;
+  }
+
+  .thumb__name {
+    font-size: 7.5pt !important;
+    line-height: 1.2 !important;
+  }
+
+  /* Louder than on screen: on paper the binomial is the identifier, not a
+     footnote to the English name. Same size as the name, and in ink. */
+  .thumb__genus,
+  .ghost__genus {
+    font-size: 7pt !important;
+    line-height: 1.2 !important;
+    color: var(--ink-soft) !important;
+  }
+
+  /* The Chinese name on the contact sheet. 7pt rather than the 6.5pt this
+     line used to be: it is a Song face now, whose strokes are finer than the
+     sans that was here, and a four-character name is four squares that want
+     the same height as the binomial beside them. */
+  .thumb__gloss {
+    font-size: 7pt !important;
+    letter-spacing: 0.04em !important;
+  }
+
+  .ghost__gloss {
+    font-size: 6.5pt !important;
+  }
+
+  /* an inline hollow plate — the two spotted birds whose photograph never
+     arrived — is a gap in a run, and stays one */
+  .thumb--hollow .thumb__plate {
+    box-shadow: none !important;
+    border: 0.4pt solid var(--rule-soft) !important;
+  }
+
+  /* ---- the 43 empty slots, pressed in ink instead of in light ----
+
+     On screen this is a deboss: tone down the sunken face, a shadow under
+     the cut and a lit lip along the bottom. None of that survives a printer.
+     What survives is a drawn frame — and since the thing is empty and the
+     sheet is in somebody's hand, it gets the tick box the screen has no use
+     for. */
+
+  .cabinet__ghosts {
+    break-before: page !important;
+    padding: 0 !important;
+    margin-top: 0 !important;
+  }
+
+  .cabinet__ghosthead {
+    padding-top: 0 !important;
+    border-top: 0 !important;
+    margin-bottom: 6mm !important;
+  }
+
+  .ghost {
+    position: relative !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    border: 0.5pt solid var(--rule) !important;
+    /* the shadow the cut used to throw, as a rule */
+    border-top: 1.5pt solid var(--ink-soft) !important;
+    padding: 2.5mm 2.5mm 7mm !important;
+    gap: 1mm !important;
+  }
+
+  .ghost__name {
+    font-size: 8pt !important;
+    line-height: 1.2 !important;
+    color: var(--ink) !important;
+    text-shadow: none !important;
+  }
+
+  /* Somewhere to put the pencil — on the wall of 43 at the foot of /list,
+     and only there. GhostFrame also draws the plate on the 43 bird pages
+     that have no photograph, and a one-sheet specimen record printed a
+     stray empty tick box in its corner (AUDIT2 §6.3). */
+  .cabinet__ghostcell .ghost::after {
+    content: '' !important;
+    position: absolute !important;
+    left: 2.5mm !important;
+    bottom: 2.5mm !important;
+    width: 3.2mm !important;
+    height: 3.2mm !important;
+    border: 0.5pt solid var(--ink-faint) !important;
+  }
+
+  /* Same reason. On /list the section lede explains the wall, so the note
+     under each frame is repetition; on a bird page that note *is* the
+     explanation — "Recorded in the field notes, but no photograph made it
+     back." — and hiding it left a blank square with nothing to say. */
+  .cabinet__ghostcell .ghost__note {
+    display: none !important;
+  }
+
+  /* ---- /birds/<slug>: one sheet, one specimen ---- */
+
+  .bird__head {
+    max-width: none !important;
+  }
+
+  .bird__name {
+    font-size: var(--fs-name) !important;
+    letter-spacing: 0 !important;
+  }
+
+  .bird__sub {
+    margin-top: 1.5mm !important;
+  }
+
+  .bird__genus {
+    font-size: 12pt !important;
+  }
+
+  /* On screen this line is hidden above 760px, because the gloss has gone to
+     stand in the plate's right margin as a vertical inscription. The sheet is
+     wide, so it would be hidden here too — brought back, and at the size the
+     panel gives it, since on a printed record the Chinese name is a second
+     identifier and not a caption. */
+  .bird__gloss {
+    display: inline !important;
+    font-size: 12pt !important;
+    color: var(--ink-soft) !important;
+  }
+
+  /* the plate on the left, the field guide beside it, the contact strip
+     under the plate — the whole record on one sheet */
+  .bird__body {
+    display: grid !important;
+    grid-template-columns: 1.15fr 1fr !important;
+    gap: 8mm !important;
+    padding: 0 !important;
+    align-items: start !important;
+  }
+
+  /* The mat is a fixed-height well on screen so that paging from a
+     landscape frame to a portrait one never moves the rest of the page.
+     Nothing pages on paper, so the well closes up on the photograph and
+     the letterboxing — two centimetres of white above and below a wide
+     frame — goes away. */
+  .bird__plate {
+    height: auto !important;
+    background: none !important;
+    box-shadow: none !important;
+    border: 0.4pt solid var(--rule) !important;
+    break-inside: avoid !important;
+  }
+
+  .bird__photo.is-front {
+    max-width: 100% !important;
+    max-height: 105mm !important;
+  }
+
+  .bird__photo,
+  .bird__zoom {
+    transition: none !important;
+    transform: none !important;
+  }
+
+  /* only the frame that is showing; the rest of the roll is the strip */
+  .bird__photo:not(.is-front) {
+    display: none !important;
+  }
+
+  .bird__strip {
+    grid-template-columns: repeat(auto-fill, minmax(18mm, 1fr)) !important;
+    gap: 1.5mm !important;
+    margin-top: 2mm !important;
+    break-inside: avoid !important;
+  }
+
+  .bird__frame {
+    background: none !important;
+    border: 0.3pt solid var(--rule-soft) !important;
+  }
+
+  .bird__frame img {
+    opacity: 1 !important;
+    transition: none !important;
+  }
+
+  .bird__frame[aria-current]::after {
+    display: none !important;
+  }
+
+  .bird__facts {
+    break-inside: avoid !important;
+  }
+
+  .bird__desc {
+    max-width: none !important;
+    font-size: 9pt !important;
+  }
+
+  /* The date and the places are the record. They get the ink here, where on
+     screen they are a quiet dl under the description. */
+  .bird__where dd {
+    font-size: 10pt !important;
+    color: var(--ink) !important;
+  }
+
+  .bird__where,
+  .bird__marklist {
+    gap: 1.2mm 5mm !important;
+  }
+
+  .bird__where dt,
+  .bird__marklist dt {
+    color: var(--ink-faint) !important;
+  }
+
+  .bird__places {
+    display: block !important;
+  }
+
+  .bird__place::after {
+    content: ', ' !important;
+  }
+  .bird__place:last-child::after {
+    content: '' !important;
+  }
+
+  .bird__tag {
+    border-bottom: 0 !important;
+  }
+}

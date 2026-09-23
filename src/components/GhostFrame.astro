@@ -1,0 +1,170 @@
+---
+/**
+ * A bird on the list that has never been photographed: an empty specimen slot.
+ *
+ * `BirdThumb` already has a hollow state, and it is the right thing inside the
+ * cabinet itself (the two spotted birds whose photo never landed). At the foot
+ * of the list the 43 birds nobody has seen are the point, not a fallback, so
+ * they get their own frame: nothing inside it but the label, the way an empty
+ * drawer in a museum cabinet still carries its card. It is drawn as a slot
+ * pressed into the board — see the note over `.ghost` below — so that a plate
+ * and a gap read as two opposite motions rather than two kinds of box.
+ *
+ *   <GhostFrame bird={bird} />              a frame in the ghost grid
+ *   <GhostFrame bird={bird} big />          the plate on /birds/<slug>
+ *
+ * It keeps the same `bird-<slug>` transition name as a BirdThumb, so the same
+ * bird still glides between the list and its own page.
+ */
+import type { Bird } from '../lib/types';
+import { birdTransitionName, splitName, typeVar } from '../lib/flock';
+
+interface Props {
+  bird: Bird;
+  /** The plate-sized version used as the hero on a bird page. */
+  big?: boolean;
+  /** Render a link to this URL. Omit for a plain, inert frame. */
+  href?: string;
+  /**
+   * The line in the corner. Defaults to the list's case — a bird nobody has
+   * seen yet. Two *spotted* birds also land here (Fish Crow, and the Great
+   * Blue Heron whose photo row has no files), and for them it is the
+   * photograph that is missing, not the bird.
+   */
+  note?: string;
+  /** Claim view-transition-name: bird-<slug>. Default true. ONE per page. */
+  transition?: boolean;
+  /** Extra classes on the root. */
+  class?: string;
+}
+
+const {
+  bird,
+  big = false,
+  href,
+  note = 'not yet seen',
+  transition = true,
+  class: className = '',
+} = Astro.props;
+
+const { english, gloss } = splitName(bird.name);
+const Tag = href ? 'a' : 'div';
+
+const styleAttr = [
+  `--t: ${typeVar(bird.type)}`,
+  transition ? `view-transition-name: ${birdTransitionName(bird)}` : '',
+]
+  .filter(Boolean)
+  .join('; ');
+---
+
+<Tag
+  class:list={['ghost', big && 'ghost--big', className]}
+  style={styleAttr}
+  href={href}
+  data-slug={bird.slug}
+  aria-label={href ? `${english}, ${bird.genus}` : undefined}
+>
+  <span class="ghost__label">
+    <span class="ghost__name">{english}</span>
+    {gloss && <span class="ghost__gloss">{gloss}</span>}
+    {bird.genus && <span class="ghost__genus">{bird.genus}</span>}
+  </span>
+  {note && <span class="ghost__note">{note}</span>}
+</Tag>
+
+<style>
+  /*
+   * A slot pressed into the board.
+   *
+   * The filled plates next door are *lifted* off the paper — a hairline and
+   * a shadow under them (--plate-edge / --plate-lift). An empty slot is the
+   * opposite motion: it goes in. --ghost-fill is the light falling down the
+   * sunken face, --ghost-press is the shadow caught under the top edge, the
+   * lit lip along the bottom of the cut and the ridge the press raised
+   * outside it, and --ghost-emboss strikes the name into the card. Both
+   * tokens are defined per theme in global.css — dark board is not inverted
+   * light board, and gets a darker well rather than a brighter one.
+   *
+   * The paper's grain runs straight through it, because nothing has been
+   * laid on top: that, plus the fact that it is finished and never fills in,
+   * is what keeps it from reading as a skeleton waiting for an image.
+   */
+  .ghost {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1.2em;
+    aspect-ratio: 3 / 4;
+    padding: clamp(0.9rem, 2.2vw, 1.3rem);
+    color: inherit;
+    text-decoration: none;
+    /* --rule, not --rule-soft: at 1.06:1 the hairline vanished and the ghost
+       wall read as a block of floating text instead of 43 empty plates. The
+       empty plate is the point, so the frame has to be visible. It is now
+       the innermost layer of --ghost-press. */
+    background-image: var(--ghost-fill);
+    box-shadow: var(--ghost-press);
+    transition:
+      box-shadow var(--dur) var(--ease),
+      background-image var(--dur) var(--ease);
+  }
+
+  a.ghost:hover,
+  a.ghost:focus-visible {
+    box-shadow: var(--ghost-press-hover);
+  }
+
+  .ghost__label { display: block; }
+
+  .ghost__name {
+    display: block;
+    font-size: var(--fs-base);
+    line-height: 1.25;
+    color: var(--ink-soft);
+    /* struck in, not printed on. A shadow under the letterform only — it
+       never lightens a glyph, so the measured contrast is untouched. */
+    text-shadow: var(--ghost-emboss);
+    text-wrap: balance;
+  }
+  a.ghost:hover .ghost__name { color: var(--ink); }
+
+  .ghost__gloss {
+    display: block;
+    margin-top: 0.15em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+  }
+
+  .ghost__genus {
+    display: block;
+    margin-top: 0.35em;
+    font-size: var(--fs-small);
+    font-style: italic;
+    line-height: 1.3;
+    color: var(--ink-faint);
+  }
+
+  .ghost__note {
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
+    /* The quietest voice in the frame, but still a sentence someone has to be
+       able to read: --ink-faint is the de-emphasis token (4.88:1 / 5.45:1).
+       It used to stack opacity: 0.55 on top of it, which measured 2.15:1. */
+    color: var(--ink-faint);
+  }
+
+  /* the hero on /birds/<slug>: the same empty drawer, at plate size */
+  .ghost--big {
+    /* a photograph's worth of nothing, not a column-height void */
+    aspect-ratio: 1;
+    padding: clamp(1.4rem, 4vw, 2.6rem);
+  }
+  .ghost--big .ghost__name { font-size: var(--fs-lg); color: var(--ink-soft); }
+  .ghost--big .ghost__genus { font-size: var(--fs-body); }
+</style>

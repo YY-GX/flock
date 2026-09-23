@@ -1,0 +1,19 @@
+node_modules/
+# dist/ and any scratch output beside it (dist-rootcheck/ and friends). The
+# build output is never committed: the deploy workflow uploads it as a Pages
+# artifact instead.
+dist*/
+.astro/
+.DS_Store
+*.log
+
+.env
+.env.production
+!.env.example
+
+# The 6.62 GB of original photographs, and whatever scripts/photos-stage.mjs
+# links in beside them. The originals are archived in Cloudflare R2
+# (PUBLIC_ORIGINALS_BASE) and are never committed; what git carries is
+# photos-web/ — the same 1,278 photographs at <=1600 px, built by
+# `npm run photos:web`.
+src/assets/photos/

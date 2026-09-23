@@ -1,0 +1,234 @@
+{
+  "_readme": [
+    "Base-map geometry for the 'where' view. Written by hand (see scripts note below);",
+    "the renderer should treat this file as the single source of truth for viewBoxes.",
+    "",
+    "locations.json gives every location: x, y, lat, lng, mapSpace and (sometimes) inset.",
+    "  mapSpace  'us' for scope=travel, 'triangle' for scope=local.",
+    "  x, y      PERCENTAGES 0-100 of that space's viewBox, y measured downwards.",
+    "            px = x / 100 * spaces[mapSpace].viewBox.width",
+    "            py = y / 100 * spaces[mapSpace].viewBox.height",
+    "  lat, lng  the real place, WGS84 degrees, kept so the projection can be redone.",
+    "  inset     'hawaii' | 'puerto_rico' — pin sits inside that inset box, NOT at its",
+    "            true position. Draw the inset frame from spaces.us.insets[].rect.",
+    "",
+    "Pins are nudged apart for legibility: no two pins in the same space are closer",
+    "than minPinGapPct. Use lat/lng, never x/y, for anything that must be accurate.",
+    "",
+    "spaces.triangle.anchorOnUs is where the whole Triangle sits as one point on the",
+    "US map (percent of the US viewBox). At country scale all 18 local pins land",
+    "there; a view that draws both spaces together can spread them around it.",
+    "",
+    "Theming: both SVGs carry class='map-root' and read CSS custom properties",
+    "(--map-land, --map-water, --map-park, --map-road, --map-ink, --map-label, ...).",
+    "Inline the SVG to let a site-level theme toggle override them; set",
+    "data-map-theme='light'|'dark' on the <svg> to pin a theme. Standalone (as <img>)",
+    "they follow prefers-color-scheme on their own."
+  ],
+  "version": 1,
+  "units": {
+    "x": "percent of viewBox width",
+    "y": "percent of viewBox height (down)"
+  },
+  "spaces": {
+    "us": {
+      "id": "us",
+      "label": "United States",
+      "scope": "travel",
+      "artwork": "src/assets/map/us.svg",
+      "viewBox": {
+        "x": 0,
+        "y": 0,
+        "width": 1000.0,
+        "height": 710.0
+      },
+      "minPinGapPct": 2.6,
+      "projection": {
+        "type": "albers-equal-area-conic",
+        "parallels": [
+          29.5,
+          45.5
+        ],
+        "origin": {
+          "lat": 37.5,
+          "lng": -96.0
+        },
+        "note": "Projected, then uniformly fitted to the land rect below, then pins were relaxed apart for legibility.",
+        "landRect": {
+          "x": 26.0,
+          "y": 22.0,
+          "width": 948.0,
+          "height": 586.82
+        }
+      },
+      "insets": [
+        {
+          "id": "hawaii",
+          "label": "Hawaiʻi",
+          "rect": {
+            "x": 36.0,
+            "y": 496.0,
+            "width": 196.0,
+            "height": 150.0
+          },
+          "rectPct": {
+            "x": 3.6,
+            "y": 69.86,
+            "width": 19.6,
+            "height": 21.13
+          },
+          "bounds": {
+            "latMin": 18.6,
+            "latMax": 23.1,
+            "lngMin": -160.6,
+            "lngMax": -154.5
+          },
+          "projection": "equirectangular, cos(lat) corrected, padded 12px"
+        },
+        {
+          "id": "puerto_rico",
+          "label": "Puerto Rico",
+          "rect": {
+            "x": 612.0,
+            "y": 578.0,
+            "width": 176.0,
+            "height": 98.0
+          },
+          "rectPct": {
+            "x": 61.2,
+            "y": 81.41,
+            "width": 17.6,
+            "height": 13.8
+          },
+          "bounds": {
+            "latMin": 17.8,
+            "latMax": 18.7,
+            "lngMin": -67.45,
+            "lngMax": -65.45
+          },
+          "projection": "equirectangular, cos(lat) corrected, padded 12px"
+        }
+      ]
+    },
+    "triangle": {
+      "id": "triangle",
+      "label": "The Research Triangle, North Carolina",
+      "scope": "local",
+      "artwork": "src/assets/map/triangle.svg",
+      "viewBox": {
+        "x": 0,
+        "y": 0,
+        "width": 1000.0,
+        "height": 870.0
+      },
+      "minPinGapPct": 3.6,
+      "projection": {
+        "type": "equirectangular",
+        "lngScale": "cos(35.88°)",
+        "bounds": {
+          "latMin": 35.64,
+          "latMax": 36.12,
+          "lngMin": -79.24,
+          "lngMax": -78.56
+        },
+        "note": "Whole viewBox is the bounds rect; pins then relaxed apart for legibility."
+      },
+      "anchorOnUs": {
+        "lat": 35.88,
+        "lng": -78.9,
+        "x": 82.37,
+        "y": 49.76,
+        "note": "Percent of the US viewBox, same units as locations.json x/y. Not relaxed."
+      },
+      "insets": [],
+      "features": [
+        "Jordan Lake",
+        "Falls Lake",
+        "Lake Crabtree",
+        "Eno River",
+        "Haw River",
+        "I-40",
+        "I-85",
+        "US 15-501",
+        "NC-54",
+        "I-440",
+        "Chapel Hill",
+        "Carrboro",
+        "Durham",
+        "Raleigh",
+        "Cary",
+        "Morrisville",
+        "Hillsborough",
+        "Pittsboro",
+        "RTP"
+      ]
+    }
+  },
+  "artwork": {
+    "provenance": "Both SVGs are original work, drawn for this project. No third-party artwork was downloaded or traced. The coastlines, lakes, roads and town blobs are coarse lat/lng point lists typed by hand from general geographic knowledge, run through the same projection as the pins, then smoothed with Catmull-Rom curves and given a deterministic wobble (seeded jitter + an SVG feTurbulence displacement filter) for the hand-drawn look.",
+    "licence": "Original, same licence as the rest of this repository.",
+    "sources": [],
+    "accuracy": "Deliberately loose. Good enough to recognise the shape of the country and the Triangle; not survey data.",
+    "palette": {
+      "light": {
+        "paper": "#f3ece0",
+        "land": "#e7dcc7",
+        "land2": "#ded1b8",
+        "edge": "#8d7f68",
+        "ink": "#5f5443",
+        "water": "#a9c9dc",
+        "water-edge": "#7fa8c0",
+        "park": "#9cb891",
+        "park-edge": "#7d9a74",
+        "road": "#c89a6e",
+        "road-minor": "#d7b78d",
+        "town": "#e0cfae",
+        "town-edge": "#b9a482",
+        "label": "#584e3c",
+        "inset": "#cbbda3"
+      },
+      "dark": {
+        "paper": "#20242a",
+        "land": "#333a42",
+        "land2": "#2c333a",
+        "edge": "#8f8674",
+        "ink": "#cfc4ad",
+        "water": "#3c5b6d",
+        "water-edge": "#54798e",
+        "park": "#4a6a51",
+        "park-edge": "#5f8567",
+        "road": "#9a7248",
+        "road-minor": "#7d5e3f",
+        "town": "#4a4438",
+        "town-edge": "#6d6350",
+        "label": "#c3b79f",
+        "inset": "#5b5344"
+      }
+    },
+    "cssVariables": [
+      "--map-paper",
+      "--map-land",
+      "--map-land2",
+      "--map-edge",
+      "--map-ink",
+      "--map-water",
+      "--map-water-edge",
+      "--map-park",
+      "--map-park-edge",
+      "--map-road",
+      "--map-road-minor",
+      "--map-town",
+      "--map-town-edge",
+      "--map-label",
+      "--map-inset"
+    ]
+  },
+  "generator": {
+    "note": "python3 src/assets/map/_build-map.py — re-projects the lat/lng tables it carries, rewrites x/y in locations.json and redraws both SVGs. Deterministic: same input, byte-identical output.",
+    "counts": {
+      "travel": 19,
+      "local": 18,
+      "total": 37
+    }
+  }
+}

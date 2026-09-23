@@ -1,0 +1,441 @@
+---
+/**
+ * One place on the map: a circular photograph of the best bird seen there,
+ * with a little tail beneath so it points at the spot. Not a map marker.
+ *
+ * Diameter comes from the species count (see pinDiameter in lib/mapView.ts).
+ * 金玉公寓 — the owners' own apartment — wears a house instead of a bird.
+ *
+ * The wrapper carries view-transition-name: place-<slug>, so the same pin
+ * stays the same pin between /places and /places/<slug>. The thumbnail
+ * inside deliberately does NOT claim bird-<slug>: on a place page that name
+ * belongs to the bird's tile in the grid, and one name per page is the rule.
+ */
+import BirdThumb from './BirdThumb.astro';
+import { placeTransitionName, splitName } from '../lib/flock';
+import type { PlaceView } from '../lib/mapView';
+import { withBase } from '../lib/paths';
+
+interface Props {
+  place: PlaceView;
+  /** false on the page that already is this place */
+  href?: string | null;
+  /** draw it as the place being read right now */
+  active?: boolean;
+  /** the drawable trip this place belongs to, if any — MapStage's routes() */
+  run?: string | null;
+  /** that trip is the subject of this page, so it stays lit (DESIGN2 §2.3) */
+  held?: boolean;
+  /** claim place-<slug>. One element per document. */
+  transition?: boolean;
+}
+
+const {
+  place,
+  href = withBase(`/places/${place.slug}`),
+  active = false,
+  run = null,
+  held = false,
+  transition = true,
+} = Astro.props;
+
+const Tag = href ? 'a' : 'div';
+const style = [
+  `--x:${place.x}`,
+  `--y:${place.y}`,
+  `--d:${place.diameter}`,
+  /* the size that actually lays the pin out: a share of the map's width */
+  `--dp:${place.span.toFixed(3)}`,
+  /* how far the invisible thumb pad may grow, as a share of the pin's own
+     width — mapView measured it as half the gap to the nearest neighbour */
+  `--hk:${(place.clear / place.span).toFixed(4)}`,
+  `--z:${Math.round(place.diameter)}`,
+  transition ? `view-transition-name:${placeTransitionName(place.slug)}` : '',
+]
+  .filter(Boolean)
+  .join(';');
+
+const label = `${place.name} — ${place.count} ${place.count === 1 ? 'bird' : 'birds'}`;
+
+/*
+ * "You are here", as opposed to "this page is about here".
+ *
+ * `active` means both: on /days/<iso> two or three pins are active and still
+ * link out, on /places/<slug> exactly one is active and has no link because
+ * it is the page. Only the second gets `is-here`, and the only thing it
+ * changes is whether the pin wears its paper name-plate at rest — see the
+ * note over .map-pin__label. It is the same condition aria-current uses,
+ * spelled as a class so the stylesheet does not have to read ARIA.
+ */
+const here = active && !href;
+
+/* A label centred under a pin at the edge of the map would hang off the
+   paper (and push the page sideways), so edge pins wear theirs inboard. */
+const edge = place.x > 78 ? 'right' : place.x < 22 ? 'left' : null;
+
+/* Pins that had to be dodged apart say so to the reader of the map: the
+   leader line MapStage draws is the honest half of the trade. */
+const dodged = place.dodge > 0.35;
+
+/*
+ * The flip-book. A pin's face is one bird out of up to fifty, and the face
+ * alone never says so. Dwell on a pin and it turns over its deck — the
+ * favourites, then the birds you can only meet here — naming each one under
+ * the place. The images are display:none until the first hover, so Chrome
+ * never fetches them for a map nobody touches (~5 more per pin).
+ *
+ * They are decoration: aria-hidden, no view-transition name, no panel.
+ */
+const deck = place.isHome ? [] : place.deck;
+---
+
+<Tag
+  class:list={[
+    'map-pin',
+    active && 'is-active',
+    dodged && 'map-pin--dodged',
+    place.isHome && 'map-pin--house',
+    edge && `map-pin--${edge}`,
+    held && 'is-held',
+    here && 'is-here',
+  ]}
+  style={style}
+  href={href ?? undefined}
+  data-place={place.slug}
+  data-run={run ?? undefined}
+  data-count={place.count}
+  data-deck={deck.length || undefined}
+  aria-label={href ? label : undefined}
+  {/* `is-active` means two different things now: on a place page it is the
+      page you are on (no href), and on a day page it is one of the two or
+      three places the day happened at (still a link). Only the first is
+      aria-current="page" — a day page that claimed to be two place pages
+      at once would be lying to a screen reader. */}
+  aria-current={active && !href ? 'page' : undefined}
+>
+  <span class="map-pin__disc">
+    {place.isHome ? (
+      <svg class="map-pin__house" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3.4 11.2 12 4l8.6 7.2" />
+        <path d="M5.6 10.4V19.4h12.8V10.4" />
+        <path d="M10 19.4v-5h4v5" />
+      </svg>
+    ) : place.pinBird ? (
+      <BirdThumb
+        bird={place.pinBird}
+        size={place.diameter}
+        shape="circle"
+        name={false}
+        opens={false}
+        transition={false}
+        class="map-pin__thumb"
+        style="--thumb:100%"
+      />
+    ) : (
+      <span class="map-pin__n">{place.count}</span>
+    )}
+
+    {deck.length > 0 && (
+      <span class="map-pin__deck" aria-hidden="true">
+        {deck.map((bird, i) => (
+          <span class="map-pin__card" style={`--k:${i}`} data-name={splitName(bird.name).english}>
+            <BirdThumb
+              bird={bird}
+              size={place.diameter}
+              shape="circle"
+              name={false}
+              opens={false}
+              transition={false}
+              style="--thumb:100%"
+            />
+          </span>
+        ))}
+      </span>
+    )}
+  </span>
+
+  <svg class="map-pin__tail" viewBox="0 0 12 14" aria-hidden="true">
+    <path d="M6 14 L1 1.6 Q6 3.6 11 1.6 Z" />
+  </svg>
+
+  <span class="map-pin__label">
+    <span class="map-pin__line">
+      <span class="map-pin__place">{place.name}</span>
+      <span class="map-pin__count">{place.count}</span>
+    </span>
+    {deck.length > 0 && <span class="map-pin__bird" aria-hidden="true"></span>}
+  </span>
+</Tag>
+
+<style>
+  .map-pin {
+    position: absolute;
+    left: calc(var(--x) * 1%);
+    top: calc(var(--y) * 1%);
+    /* the tail tip, not the middle of the disc, sits on the spot */
+    transform: translate(-50%, -100%);
+    /* sized against the map, never in raw pixels: the pins and the coastline
+       then shrink together and the dodge in mapView.ts holds at every width */
+    width: calc(var(--dp) * 1% * var(--pin-k, 1));
+    z-index: calc(100 - var(--z));
+    color: inherit;
+    text-decoration: none;
+    /* the pin is a circle, not the rectangle its box describes: only the disc
+       takes the pointer, so a neighbour's corners and tail cannot steal it.
+       :hover still reaches this element from the disc inside it. */
+    pointer-events: none;
+    transition: opacity var(--dur) var(--ease), filter var(--dur) var(--ease);
+  }
+  a.map-pin { cursor: pointer; }
+
+  /*
+   * The thumb pad (TODO C3) — the only part of a pin that is not drawn.
+   *
+   * A disc is a percentage of the map, so the smallest one measures 10.2 px
+   * on a 360 px phone against WCAG 2.5.8's 24. The photograph cannot grow
+   * without moving places that are already as far apart as the dodge can
+   * honestly push them, so an invisible circle round it grows instead:
+   *
+   *   up to 24 px          — `(24px - 100%) / 2` is what this pin is short,
+   *                          and it is zero or negative once the disc is big
+   *                          enough, so above ~960 px the pad does not exist
+   *   never past --hk      — half the gap mapView measured to the nearest
+   *                          neighbour, as a share of this pin's own width
+   *
+   * Because every pad stops at *half* the gap, two pads may meet and can
+   * never overlap: no pin can take another's centre, and the "0 unreachable"
+   * property of the drawing survives. A circle, not the box it is cut from —
+   * a square pad's corners reach 1.41x further than its edges, which is the
+   * whole reason `.map-pin` itself does not take the pointer.
+   *
+   * `margin`, not `top`/`left`: a percentage margin resolves against the
+   * containing block's *width* on all four sides, while a percentage `top`
+   * resolves against its height — and the pin box is taller than it is wide,
+   * because of the tail. Both terms above must mean "a share of the disc".
+   */
+  .map-pin::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    --hit: max(0px, min((24px - 100%) / 2, 100% * var(--hk, 0)));
+    margin: calc(-1 * var(--hit));
+    width: calc(100% + 2 * var(--hit));
+    aspect-ratio: 1;
+    border-radius: 50%;
+    pointer-events: auto;
+  }
+
+  .map-pin__disc {
+    display: block;
+    position: relative;
+    pointer-events: auto;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--paper-sunk);
+    box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--rule);
+    transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+  }
+
+  /* --- the flip-book -------------------------------------------------- */
+
+  /*
+   * Kept out of the layout until the pin is first hovered: Chrome does not
+   * fetch a lazy image that has no box, so a map nobody touches costs
+   * nothing, and the 500ms dwell before the first turn covers the fetch.
+   */
+  .map-pin__deck {
+    display: none;
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    overflow: hidden;
+  }
+  .map-pin.is-armed .map-pin__deck { display: block; }
+
+  .map-pin__card {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 260ms var(--ease);
+  }
+  .map-pin__card.is-on { opacity: 1; }
+  .map-pin__card :global(.thumb) { width: 100%; }
+
+  /* the face fades under whichever card is showing, and back on leave */
+  .map-pin__disc > :global(.map-pin__thumb),
+  .map-pin__house,
+  .map-pin__n {
+    transition: opacity 260ms var(--ease);
+  }
+  .map-pin.is-flipping .map-pin__disc > :global(.map-pin__thumb) { opacity: 0; }
+
+  .map-pin__tail {
+    display: block;
+    pointer-events: none;
+    width: max(7px, 26%);
+    height: auto;
+    margin: -2px auto 0;
+  }
+  .map-pin__tail path {
+    fill: var(--paper);
+    stroke: var(--rule);
+    stroke-width: 0.9;
+  }
+
+  .map-pin__house {
+    width: 54%;
+    height: 54%;
+    margin: 23%;
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .map-pin--house .map-pin__disc { background: var(--paper-raised); }
+
+  .map-pin__n {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    color: var(--ink-soft);
+  }
+
+  /* the name only appears when you ask for it */
+  .map-pin__label {
+    position: absolute;
+    top: calc(100% + 3px);
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 42vw;
+    padding: 0.15em 0.5em;
+    background: var(--paper);
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    color: var(--ink);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast) var(--ease);
+  }
+  .map-pin__line {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4em;
+  }
+  .map-pin__count { color: var(--ink-faint); }
+
+  /*
+   * The bird now showing. Out of the label's flow on purpose: the place
+   * name and its count must not move a pixel when the deck starts turning.
+   */
+  .map-pin__bird {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    display: block;
+    width: max-content;
+    max-width: 42vw;
+    padding: 0 0.5em 0.15em;
+    background: var(--paper);
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink-soft);
+    opacity: 0;
+    transition: opacity 260ms var(--ease);
+  }
+  .map-pin.is-flipping .map-pin__bird { opacity: 1; }
+
+  .map-pin--right .map-pin__label { left: auto; right: 0; transform: none; }
+  .map-pin--left .map-pin__label { left: 0; transform: none; }
+  .map-pin--right .map-pin__bird { left: auto; right: 0; transform: none; text-align: right; }
+  .map-pin--left .map-pin__bird { left: 0; transform: none; text-align: left; }
+
+  .map-pin:hover,
+  .map-pin:focus-visible { z-index: 120; }
+  /*
+   * The name-plate, and the one page that should not be showing it at rest.
+   *
+   * An active pin holds its label up so you can see which place the page is
+   * about without pointing at anything. On /days/<iso> that is the whole
+   * job — two or three pins are active and nothing else on the page says
+   * which. On /places/<slug> it is a third copy: the <h1> says "Patterson
+   * Place & Five Oaks" 200 px above and the lede says "10 birds" under it,
+   * and the pill repeats both of them *on top of the drawing* — measured on
+   * that page it covers the town name CARRBORO and a corner of a
+   * neighbouring pin, on a sheet only 476 px wide. That is the floating
+   * piece the owner was looking at ("floating 的组件优化一下").
+   *
+   * So the page's own pin keeps the black ring — which is what actually
+   * says "here", and is unambiguous — and drops the words, which were
+   * already on the page. Hover or focus it and the label still comes up,
+   * exactly as it does for every other pin.
+   */
+  .map-pin:hover .map-pin__label,
+  .map-pin:focus-visible .map-pin__label,
+  .map-pin.is-active:not(.is-here) .map-pin__label { opacity: 1; }
+
+  .map-pin:hover .map-pin__disc,
+  .map-pin:focus-visible .map-pin__disc { transform: scale(1.09); }
+
+  /*
+   * Same trip. A quieter claim than the bird glow and a different one, so it
+   * is a different class: --ink-soft rather than a type colour, no dimming
+   * of the rest of the map, and it survives the bird glow being cleared.
+   * `is-held` is the server's — a place page and a day page hold their own
+   * trip open — and `is-trip` is the hover, from the MapStage script.
+   */
+  .map-pin.is-trip:not(.is-active) .map-pin__disc,
+  .map-pin.is-held:not(.is-active) .map-pin__disc {
+    transform: scale(1.08);
+    box-shadow:
+      0 0 0 2px var(--paper),
+      0 0 0 3px var(--ink-soft),
+      0 0 18px 5px color-mix(in srgb, var(--ink-soft) 30%, transparent);
+  }
+  /* the ring only. The route's own label already names the trip, and five
+     paper pills stacked over three photographs is not a map */
+
+  /*
+   * 137, not 130. The trips bring their pencil line up over the photographs
+   * (MapStage, .map__routes--over at 134). Over a hovered pin that is right
+   * — you want to see the whole line while you are asking for it, and the
+   * pointer moves on. On a place page the pin and its name are there for as
+   * long as you read the page, and a pencil line permanently through the
+   * words "Denver, CO" is not. So the page's own pin, and only that one,
+   * sits above the pen. Still below the Triangle marker at 140.
+   */
+  .map-pin.is-active {
+    z-index: 137;
+  }
+  .map-pin.is-active .map-pin__disc {
+    box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink);
+  }
+
+  /* the signature: this bird was also seen here */
+  .map-pin.is-lit {
+    z-index: 110;
+  }
+  .map-pin.is-lit .map-pin__disc {
+    transform: scale(1.14);
+    box-shadow:
+      0 0 0 2px var(--paper),
+      0 0 0 4px var(--glow, var(--ink)),
+      0 0 22px 7px color-mix(in srgb, var(--glow, var(--ink)) 42%, transparent);
+  }
+  .map-pin.is-lit .map-pin__label { opacity: 1; }
+
+  /* anything the hovered bird has never visited steps back */
+  :global(.map.is-glowing) .map-pin:not(.is-lit) {
+    opacity: 0.3;
+  }
+</style>

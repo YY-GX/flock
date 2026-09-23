@@ -1,0 +1,651 @@
+---
+/**
+ * /list — the specimen cabinet.
+ *
+ * The one honest, conventional view on the site: every bird, laid out in a
+ * dense masonry, searchable and filterable without a page reload. The other
+ * four views rearrange the flock for effect; this one has a job.
+ *
+ * Two deliberate choices worth keeping:
+ *
+ *  1. A plate is an `<a href="/birds/<slug>">`, not a panel trigger. Every
+ *     bird has a real page, the plate and that page's hero share the
+ *     `bird-<slug>` transition name, so clicking a plate grows it into the
+ *     photograph. That also keeps 135 KB of panel payload off this page.
+ *  2. The 43 birds nobody has seen are not hidden, deferred or padded with
+ *     placeholder art. They close the cabinet as empty frames, which is the
+ *     truthful shape of a life list: mostly what you have seen, and a wall
+ *     of what you have not.
+ *
+ *  3. SPOTTED IS NOT PHOTOGRAPHED. The grids are 238 + 43; the word
+ *     "photographed" is 236, and 45 frames on this page are empty (the 43
+ *     below, plus the two spotted birds whose photo row is). listView.ts
+ *     keeps both partitions and says why; every string here picks the one
+ *     that matches its own verb, and `scripts/og-cards.mjs` draws the card
+ *     for this page from the same two numbers.
+ *
+ * Filtering is O(281) per keystroke over a flat index emitted below — no
+ * layout thrash beyond toggling `hidden`, no virtual scrolling, no library.
+ */
+import Base from '../layouts/Base.astro';
+import BirdThumb from '../components/BirdThumb.astro';
+import GhostFrame from '../components/GhostFrame.astro';
+import ListControls from '../components/ListControls.astro';
+import {
+  colophon,
+  colorFacets,
+  ghostTwins,
+  ghosts,
+  indexOf,
+  shelved,
+  tagFacets,
+  typeFacets,
+  withPhoto,
+  withoutPhoto,
+} from '../lib/listView';
+import { withBase } from '../lib/paths';
+
+/* One flat array: the cabinet first, then the empty frames. The client only
+   needs to know where the seam is. */
+const index = { n: shelved.length, rows: [...indexOf(shelved), ...indexOf(ghosts)] };
+
+const firstDate = shelved
+  .map((r) => r.bird.firstSpotted)
+  .filter(Boolean)
+  .sort()[0];
+
+/* ---- the colophon (DESIGN.md I7) ----
+
+   A colophon is the note at the end of a book saying how it was made, so it
+   goes at the very foot of the cabinet, after the ghost wall, and it is
+   one sentence in the smallest type on the page. Numbers from `listView`, so
+   the next Notion sync moves them without anyone editing this line.
+
+   The lens split (427 on the XF 70-300, 627 on the XF 500) is deliberately
+   not here. Three bodies is the story — one camera made four fifths of the
+   record — and which of two Fuji lenses was on it is inventory, not a note at
+   the end of a book. The lens does survive on `/birds/<slug>`, where it reads
+   as part of a specimen record rather than as a list of kit. */
+const fmt = (n: number) => n.toLocaleString('en-US');
+/* the only three articles this can produce today are "a", "a", "an" */
+const article = (s: string) => (/^[aeiou]/i.test(s) ? 'an' : 'a');
+const kit = colophon.bodies.map(
+  (b, i) => `${article(b.body)} ${b.body} (${fmt(b.frames)}${i === 0 ? ' frames' : ''})`,
+);
+const madeOn =
+  kit.length > 1 ? `${kit.slice(0, -1).join(', ')} and ${kit[kit.length - 1]}` : (kit[0] ?? '');
+---
+
+<Base
+  title="All · Birding Checklist"
+  description={`${withPhoto.length} birds photographed, ${withoutPhoto.length} still to find.`}
+>
+  <section class="page cabinet" id="cabinet">
+    <header class="page__head">
+      <p class="eyebrow">Birding checklist</p>
+      <h1 class="display">All</h1>
+      <p class="lede">
+        {withPhoto.length} birds photographed since {firstDate?.slice(0, 4) ?? '2024'}, and
+        {' '}{withoutPhoto.length} frames on this page still empty.
+      </p>
+    </header>
+
+    <div class="cabinet__bar">
+      <ListControls
+        total={shelved.length}
+        ghostTotal={ghosts.length}
+        types={typeFacets}
+        tags={tagFacets}
+        colors={colorFacets}
+      />
+    </div>
+
+    <div class="cabinet__grid" data-grid>
+      {/* `size` is only the build size here — the cell's own width wins (see
+          the grid rules below). Plates are cropped to 3:4 at build time rather
+          than by the browser, so this number is the resolution the photograph
+          arrives at: 168 -> 336x448 device px.
+
+          Measured in Chrome at every viewport width from 320 to 2600: a cell
+          is 150-184 CSS px once the grid has three or more columns (median
+          160), so 336x448 is the median device box exactly and the widest
+          desktop cell stretches it 1.09x. Below ~600px the grid falls to two
+          columns and then one, and a cell reaches 275 CSS px — a 1.64x
+          stretch, where the old full-frame crop stretched 2.7x. 200 would
+          have been 400x533, a fifth wider than the desktop grid ever shows,
+          and 78% more bytes on the wire instead of 35%. */}
+      {shelved.map((row, i) => (
+        <div class="cabinet__cell" data-card>
+          {/* `gloss`: all 238 shelved birds carry a Chinese name, so this is
+              one extra caption line on every plate and a ragged cell on none.
+              The ghost wall below deliberately does not get it — 2 of its 43
+              have a gloss, and a caption that appears on two cards out of
+              forty-three reads as a mistake. */}
+          <BirdThumb
+            bird={row.bird}
+            size={168}
+            shape="portrait"
+            genus
+            gloss
+            eager={i < 12}
+            href={withBase(`/birds/${row.bird.slug}`)}
+          />
+        </div>
+      ))}
+    </div>
+
+    <p class="cabinet__none" data-none hidden>
+      Nothing in the cabinet matches that. Try fewer filters.
+    </p>
+
+    <section class="cabinet__ghosts" aria-labelledby="ghosts-head">
+      <header class="cabinet__ghosthead">
+        <p class="eyebrow" id="ghosts-head">Still to come</p>
+        <p class="cabinet__ghostlede">
+          {ghosts.length} cards on the list that nobody has seen yet — {ghostTwins} of them a
+          second card for a bird already in the cabinet above. The frames stay up.
+        </p>
+      </header>
+
+      <div class="cabinet__ghostgrid" data-ghost-grid>
+        {ghosts.map((row) => (
+          <div class="cabinet__ghostcell" data-card>
+            {/* note="" on purpose: 43 repetitions of "not yet seen" would be
+                noise. The section heading above says it once. */}
+            <GhostFrame bird={row.bird} href={withBase(`/birds/${row.bird.slug}`)} note="" />
+          </div>
+        ))}
+      </div>
+    </section>
+
+    {/* Outside `.cabinet__ghosts` on purpose: the filter hides that section
+        when nothing in it matches, and a colophon describes the book, not the
+        page you have filtered it down to. It never moves. */}
+    <p class="cabinet__colophon">
+      Photographed on {madeOn} — {fmt(colophon.frames)} in all.
+    </p>
+  </section>
+
+  <script
+    type="application/json"
+    id="cab-index"
+    is:inline
+    set:html={JSON.stringify(index).replace(/</g, '\\u003c')}
+  ></script>
+</Base>
+
+<style>
+  /* ---- the sticky drawer front ---- */
+
+  .cabinet__bar {
+    padding-top: 1.1rem;
+    margin-bottom: clamp(24px, 4vh, 44px);
+    background: var(--paper);
+  }
+
+  /* Follows you down the cabinet where there is room for it. On a phone it
+     just scrolls away (and `ListControls` starts every drawer closed there, so
+     the first screen is plates rather than filters).
+
+     Closed it is two lines; open, the Tags drawer is 43 chips, so the stuck bar
+     is capped — and the cap also keeps it out of the compass's corner, which a
+     sticky element has to do for itself. */
+  @media (min-width: 700px) {
+    .cabinet__bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      max-height: min(72vh, calc(100vh - var(--compass-safe)));
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+  }
+
+  /* ---- the cabinet ----
+
+     One grid of equal 3:4 plates, read left to right, and the ghost wall at
+     the foot repeats it cell for cell. Ragged masonry was the first draft and
+     it lost: CSS columns flow a 238-item list *down* each column, so reading
+     it alphabetically meant scrolling 13,000px and coming back for column two.
+     Equal drawers are also what a specimen cabinet actually looks like. */
+
+  .cabinet__grid,
+  .cabinet__ghostgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: clamp(18px, 2.2vw, 32px) clamp(14px, 1.8vw, 26px);
+  }
+
+  .cabinet__grid { padding: 0 var(--gutter); }
+
+  .cabinet__cell { min-width: 0; }
+
+  /* BirdThumb is sized in px by contract; in the grid it just fills its cell */
+  .cabinet__cell :global(.thumb) { width: 100%; }
+
+  /* ---- the caption under a plate ----
+
+     The plates are the page; the caption's job is to name one, not to
+     compete with it. Three lines at nearly one size made the block 33% as
+     tall as the photograph above it, and at 1440 thirty of the 238 English
+     names wrapped to a second line ("American Oystercatcher", "American
+     White Pelican"), so a caption was four lines on some plates and three
+     on others and the rows sat unevenly. Smaller, and one line each.
+
+     ONLY THE TWO LATIN LINES COULD MOVE, and that is a measurement rather
+     than a preference. The gloss is set in --serif-cjk, a Song face, which
+     draws its horizontal strokes as hairlines: almost no pixel of a glyph
+     reaches full coverage, so shrinking it costs contrast directly.
+     Re-measured here on the composited pixels — screenshot the rendered
+     line at 1x, take the darkest ink 24 captions actually achieve against
+     the paper behind them, both themes:
+
+         15.2px   6.92-6.99:1      14.6px   4.88-6.99:1
+         14.9px   6.66-6.99:1      14.3px   4.36-6.99:1   <- under 4.5
+         14.0px   5.17-6.99:1      13.8px   4.05-6.99:1   <- under 4.5
+
+     It is not monotonic — it is hinting luck at each size — so the floor is
+     the last size that clears 4.5:1 with room either side of it, and that
+     is where it already was. The two levers that might have bought a
+     smaller size do not: font-weight 600 moves the 13.8px worst case to
+     4.62:1 and a 0.3px text-stroke to 4.20:1, which is what the earlier
+     pass found when it tried weight. The only thing that clears it is
+     --ink (7.53:1 at 13.8px), and the ink is the one signal telling the
+     gloss apart from the English name above it. So the gloss holds at
+     --fs-base and the rest of the block is built around it.
+
+     The Latin lines have real stems and lose almost nothing: the name at
+     --fs-small still measures 15.47-15.65:1 (it is --ink, which reaches
+     full coverage at any of these sizes) and the binomial at --fs-tiny
+     6.08-6.99:1 light / 7.08-7.89:1 dark.
+
+     Scoped twice on purpose. To .cabinet__cell, because BirdThumb is shared
+     by all six views and .thumb__name renders on /places, /days,
+     /groups/<slug> and the home flock at --fs-base; none of them move. And
+     to `screen`, because none of the reasoning above is about paper — the
+     contact sheet is a 30mm plate at 7.5 / 7 / 7pt set by global.css §7,
+     printed ink on white, and it keeps every one of its 16 pages. */
+
+  @media screen {
+    .cabinet__cell :global(.thumb__caption) { padding-top: 0.45em; }
+
+    .cabinet__cell :global(.thumb__name) {
+      font-size: var(--fs-small);
+      line-height: 1.2;
+    }
+
+    .cabinet__cell :global(.thumb__gloss) {
+      /* size held by the measurement above; the tracking is what comes down.
+         0.08em was set when this line was the same size as the English name
+         and wanted the air. It is now the largest line in the block, and the
+         largest line should not also be the loosest. */
+      margin-top: 0.05em;
+      line-height: 1.25;
+      letter-spacing: 0.05em;
+    }
+
+    .cabinet__cell :global(.thumb__genus) {
+      font-size: var(--fs-tiny);
+      line-height: 1.25;
+    }
+  }
+
+  .cabinet__none {
+    padding: 2.5rem var(--gutter) 0;
+    margin: 0;
+    font-size: var(--fs-body);
+    color: var(--ink-soft);
+  }
+
+  /* ---- the empty frames ---- */
+
+  .cabinet__ghosts {
+    padding: 0 var(--gutter);
+    margin-top: clamp(64px, 12vh, 140px);
+  }
+
+  .cabinet__ghosthead {
+    max-width: 44ch;
+    padding-top: clamp(28px, 5vh, 56px);
+    border-top: 1px solid var(--rule-soft);
+    margin-bottom: clamp(28px, 5vh, 52px);
+  }
+
+  .cabinet__ghosthead .eyebrow { margin-bottom: 0.9rem; }
+
+  .cabinet__ghostlede {
+    margin: 0;
+    font-size: var(--fs-body);
+    color: var(--ink-faint);
+    text-wrap: pretty;
+  }
+
+  .cabinet__ghostcell { min-width: 0; }
+
+  /* ---- the colophon ----
+
+     Same hairline-and-space rhythm as the ghost wall's own head, one step
+     quieter: a rule, air, and a single line of --ink-faint. Dropped straight
+     under the last empty frame with no rule it read as that frame's caption. */
+
+  .cabinet__colophon {
+    max-width: 52ch;
+    padding-top: clamp(20px, 3.5vh, 34px);
+    border-top: 1px solid var(--rule-soft);
+    margin: clamp(56px, 10vh, 110px) var(--gutter) 0;
+    font-size: var(--fs-small);
+    color: var(--ink-faint);
+    text-wrap: pretty;
+  }
+
+  /* On paper it is where it belongs: the last thing on the last sheet, under
+     the tick boxes, kept whole. A contact sheet you carry into the field is
+     exactly the copy that wants to say what took it. */
+  @media print {
+    .cabinet__colophon {
+      max-width: none;
+      padding-top: 4mm;
+      margin: 8mm 0 0;
+      break-inside: avoid;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .cabinet__grid,
+    .cabinet__ghostgrid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+  }
+</style>
+
+<script>
+  /**
+   * The cabinet's filter. Everything is a flat pass over ~281 records, which
+   * is far below the point where any of this needs to be clever.
+   *
+   *   - within a facet group the values OR  (Red or Blue)
+   *   - between groups they AND             (Raptors AND Red)
+   *   - every chip's count is recomputed ignoring its own group, so it says
+   *     "how many you would get if you also pressed me", never a dead 0.
+   */
+
+  interface Row {
+    q: string;
+    t: string;
+    g: string[];
+    c: string[];
+    d: string;
+    r: number;
+  }
+
+  type Group = 'type' | 'tag' | 'color';
+  type Sort = 'name' | 'date' | 'group';
+
+  /* Must stay character-for-character the same rule as `fold()` in
+     src/lib/listView.ts \u2014 that one folded the haystack at build time, this
+     one folds what the reader types. Apostrophes included: the data holds
+     both U+0027 and U+2019. */
+  function fold(s: string): string {
+    return s
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/['\u2019]/g, '')
+      .toLowerCase()
+      .trim();
+  }
+
+  let keysWired = false;
+
+  function setup() {
+    const root = document.getElementById('cabinet');
+    if (!root || root.dataset.wired === '1') return;
+    root.dataset.wired = '1';
+
+    const payload = document.getElementById('cab-index');
+    const grid = root.querySelector<HTMLElement>('[data-grid]');
+    const form = root.querySelector<HTMLFormElement>('#cab-controls');
+    if (!payload || !grid || !form) return;
+
+    const { n: seam, rows } = JSON.parse(payload.textContent || '{"n":0,"rows":[]}') as {
+      n: number;
+      rows: Row[];
+    };
+
+    const cards = Array.from(root.querySelectorAll<HTMLElement>('[data-card]'));
+    if (cards.length !== rows.length) return; // markup and index disagree: leave it unfiltered
+
+    const shelf = cards.slice(0, seam);
+    const input = form.querySelector<HTMLInputElement>('#cab-q')!;
+    const countEl = form.querySelector<HTMLElement>('[data-count]')!;
+    const clearBtn = form.querySelector<HTMLButtonElement>('[data-clear]')!;
+    const noneEl = root.querySelector<HTMLElement>('[data-none]')!;
+    const ghostSection = root.querySelector<HTMLElement>('.cabinet__ghosts');
+    const sortBtns = Array.from(form.querySelectorAll<HTMLButtonElement>('[data-sort]'));
+    const chips = Array.from(form.querySelectorAll<HTMLButtonElement>('[data-facet]'));
+
+    const chipsBy: Record<Group, HTMLButtonElement[]> = { type: [], tag: [], color: [] };
+    for (const chip of chips) chipsBy[chip.dataset.facet as Group].push(chip);
+
+    /* The three facet disclosures, tagged with the group they hold. */
+    const drawers = Array.from(form.querySelectorAll<HTMLDetailsElement>('[data-facet-details]'));
+    for (const det of drawers) {
+      const first = det.querySelector<HTMLElement>('[data-facet]');
+      if (first) det.dataset.facetGroup = first.dataset.facet!;
+    }
+
+    const picked: Record<Group, Set<string>> = {
+      type: new Set(),
+      tag: new Set(),
+      color: new Set(),
+    };
+    let terms: string[] = [];
+    let sort: Sort = 'name';
+
+    /* ---- sorting: reorder the DOM once, the columns reflow themselves ---- */
+
+    const order: Record<Sort, number[]> = {
+      name: shelf.map((_, i) => i),
+      date: shelf
+        .map((_, i) => i)
+        .sort((a, b) => (rows[a].d < rows[b].d ? -1 : rows[a].d > rows[b].d ? 1 : a - b)),
+      group: shelf.map((_, i) => i).sort((a, b) => rows[a].r - rows[b].r || a - b),
+    };
+
+    let applied: Sort = 'name';
+    function applySort() {
+      if (applied === sort) return;
+      applied = sort;
+      const frag = document.createDocumentFragment();
+      for (const i of order[sort]) frag.appendChild(shelf[i]);
+      grid!.appendChild(frag);
+    }
+
+    /* ---- filtering ---- */
+
+    const hitsQ = (r: Row) => terms.every((t) => r.q.includes(t));
+    const hitsType = (r: Row) => !picked.type.size || picked.type.has(r.t);
+    const hitsTag = (r: Row) => !picked.tag.size || r.g.some((g) => picked.tag.has(g));
+    const hitsColor = (r: Row) => !picked.color.size || r.c.some((c) => picked.color.has(c));
+
+    function run() {
+      const tally: Record<Group, Map<string, number>> = {
+        type: new Map(),
+        tag: new Map(),
+        color: new Map(),
+      };
+      const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+
+      let shown = 0;
+      let shownGhosts = 0;
+
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const q = hitsQ(r);
+        const ty = hitsType(r);
+        const tg = hitsTag(r);
+        const co = hitsColor(r);
+        const pass = q && ty && tg && co;
+
+        const card = cards[i];
+        if (card.hidden === pass) card.hidden = !pass;
+
+        if (pass) {
+          if (i < seam) shown++;
+          else shownGhosts++;
+        }
+
+        /* chip counts are measured over the spotted birds only, so they
+           match the 109 / 59 / … the rest of the site quotes */
+        if (i >= seam) continue;
+        if (q && tg && co && r.t) bump(tally.type, r.t);
+        if (q && ty && co) for (const g of r.g) bump(tally.tag, g);
+        if (q && ty && tg) for (const c of r.c) bump(tally.color, c);
+      }
+
+      for (const group of ['type', 'tag', 'color'] as Group[]) {
+        for (const chip of chipsBy[group]) {
+          const n = tally[group].get(chip.dataset.value!) ?? 0;
+          const slot = chip.querySelector<HTMLElement>('[data-n]');
+          if (slot) slot.textContent = String(n);
+          chip.toggleAttribute('data-empty', n === 0 && !picked[group].has(chip.dataset.value!));
+        }
+      }
+
+      /* A closed drawer still reports itself: the badge counts what you have
+         picked in it, or falls back to how many values it holds. */
+      for (const det of drawers) {
+        const on = picked[det.dataset.facetGroup as Group].size;
+        det.toggleAttribute('data-on', on > 0);
+        const badge = det.querySelector<HTMLElement>('[data-badge]');
+        if (badge) badge.textContent = on > 0 ? String(on) : badge.dataset.all!;
+      }
+
+      const filtered = terms.length > 0 || picked.type.size + picked.tag.size + picked.color.size > 0;
+      /* "recorded", not "photographed": these two numbers count cells, and
+         two of the cells in the cabinet grid are hollow. See ListControls. */
+      countEl.textContent = filtered
+        ? `${shown} recorded · ${shownGhosts} still to come`
+        : `${seam} recorded · ${rows.length - seam} still to come`;
+      clearBtn.hidden = !filtered;
+      noneEl.hidden = shown + shownGhosts > 0;
+      if (ghostSection) ghostSection.hidden = shownGhosts === 0;
+
+      writeUrl();
+    }
+
+    /* ---- the address bar, so a filtered cabinet can be shared ---- */
+
+    function writeUrl() {
+      const p = new URLSearchParams();
+      if (input.value.trim()) p.set('q', input.value.trim());
+      for (const group of ['type', 'tag', 'color'] as Group[]) {
+        for (const v of picked[group]) p.append(group, v);
+      }
+      if (sort !== 'name') p.set('sort', sort);
+      const qs = p.toString();
+      history.replaceState(history.state, '', qs ? `?${qs}` : location.pathname);
+    }
+
+    function readUrl() {
+      const p = new URLSearchParams(location.search);
+      const q = p.get('q');
+      if (q) {
+        input.value = q;
+        terms = fold(q).split(/\s+/).filter(Boolean);
+      }
+      for (const group of ['type', 'tag', 'color'] as Group[]) {
+        for (const v of p.getAll(group)) picked[group].add(v);
+      }
+      const s = p.get('sort');
+      if (s === 'date' || s === 'group') sort = s;
+
+      for (const chip of chips) {
+        const on = picked[chip.dataset.facet as Group].has(chip.dataset.value!);
+        chip.setAttribute('aria-pressed', String(on));
+      }
+      for (const btn of sortBtns) btn.setAttribute('aria-pressed', String(btn.dataset.sort === sort));
+      /* arriving at /list?type=raptors&color=red opens the drawers it names */
+      for (const det of drawers) {
+        if (picked[det.dataset.facetGroup as Group].size) det.open = true;
+      }
+    }
+
+    /* ---- wiring ---- */
+
+    let queued = 0;
+    function schedule() {
+      if (queued) return;
+      queued = requestAnimationFrame(() => {
+        queued = 0;
+        run();
+      });
+    }
+
+    input.addEventListener('input', () => {
+      terms = fold(input.value).split(/\s+/).filter(Boolean);
+      schedule();
+    });
+
+    form.addEventListener('submit', (e) => e.preventDefault());
+
+    for (const chip of chips) {
+      chip.addEventListener('click', () => {
+        const group = chip.dataset.facet as Group;
+        const value = chip.dataset.value!;
+        const on = !picked[group].has(value);
+        if (on) picked[group].add(value);
+        else picked[group].delete(value);
+        chip.setAttribute('aria-pressed', String(on));
+        schedule();
+      });
+    }
+
+    for (const btn of sortBtns) {
+      btn.addEventListener('click', () => {
+        sort = btn.dataset.sort as Sort;
+        for (const b of sortBtns) b.setAttribute('aria-pressed', String(b === btn));
+        applySort();
+        schedule();
+      });
+    }
+
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      terms = [];
+      for (const group of ['type', 'tag', 'color'] as Group[]) picked[group].clear();
+      for (const chip of chips) chip.setAttribute('aria-pressed', 'false');
+      schedule();
+      input.focus();
+    });
+
+    /* Type is served open because on a wide screen there is room for nine
+       coloured dots. On a phone the whole drawer was 66% of the first screen,
+       so there everything starts closed and the plates start above the fold. */
+    if (!matchMedia('(min-width: 700px)').matches) {
+      for (const det of form.querySelectorAll<HTMLDetailsElement>('[data-wide-open]')) {
+        det.open = false;
+      }
+    }
+
+    readUrl();
+    applySort();
+    run();
+
+    /* "/" focuses the search. M T G L and Esc stay the compass's, and the
+       compass already ignores keys typed into an input. */
+    if (!keysWired) {
+      keysWired = true;
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+        const el = document.activeElement as HTMLElement | null;
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+        const box = document.querySelector<HTMLInputElement>('#cab-q');
+        if (!box) return;
+        e.preventDefault();
+        box.focus();
+        box.select();
+      });
+    }
+  }
+
+  setup();
+  document.addEventListener('astro:page-load', setup);
+</script>

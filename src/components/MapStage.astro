@@ -1,0 +1,1207 @@
+---
+/**
+ * One map — the watercolour base drawing with its pins laid over the top.
+ *
+ * The SVG is inlined rather than <img>-ed so the --map-* custom properties
+ * reach it and it follows the site theme. Its internal ids are namespaced
+ * on the way in, because both maps ship a filter called "wobble" and the
+ * two of them share a document on /places.
+ *
+ * Pins are HTML (view transitions do not work on SVG children), positioned
+ * in percentages of the same viewBox the artwork uses, so pin and coastline
+ * stay in register at every width.
+ */
+import MapPin from './MapPin.astro';
+import usSvg from '../assets/map/us.svg?raw';
+import triangleSvg from '../assets/map/triangle.svg?raw';
+import {
+  SPACES,
+  homeMarker,
+  homeInsetDots,
+  inkLoop,
+  inkArrow,
+  routes,
+  heldRoutes,
+  runOfPlace,
+  compassRose,
+  scaleBar,
+  HOME_RING_R,
+  HOME_INSET,
+  HOME_INSET_PAD,
+  HOME_ARROW,
+  type PlaceView,
+  type SpaceId,
+} from '../lib/mapView';
+import { withBase } from '../lib/paths';
+
+interface Props {
+  space: SpaceId;
+  places: PlaceView[];
+  /** the place being read right now, drawn in full ink and not a link */
+  activeSlug?: string | null;
+  /**
+   * More places to draw in full ink, for a view whose subject is several
+   * places at once: a day out can have two certain places (three of the four
+   * Colorado days do) and neither of them is "the page you are on", so these
+   * keep their link to the place page. `/days/<iso>` is the only caller.
+   */
+  activeSlugs?: string[];
+  /** draw the "home patch" marker that zooms to the Triangle (US map only) */
+  home?: boolean;
+  /** where that marker points; a hash on /places, a URL elsewhere */
+  homeHref?: string;
+  /** give the pins view-transition names. One map per document may. */
+  transition?: boolean;
+}
+
+const {
+  space,
+  places,
+  activeSlug = null,
+  activeSlugs = [],
+  home = false,
+  homeHref = '#triangle',
+  transition = true,
+} = Astro.props;
+
+const def = SPACES[space];
+
+/* activeSlug is "the place this page is", so it loses its href; activeSlugs
+   are "places this page is about", so they keep theirs. */
+const lit = new Set([...activeSlugs, ...(activeSlug ? [activeSlug] : [])]);
+
+/* Namespace the artwork's internal ids so two inlined maps cannot collide. */
+const raw = space === 'us' ? usSvg : triangleSvg;
+const art = raw
+  .replace(/id="wobble"/g, `id="wobble-${space}"`)
+  .replace(/url\(#wobble\)/g, `url(#wobble-${space})`);
+
+const showHome = home && space === 'us';
+
+/* Pins that mapView's dodge had to push off their true coordinate. Each one
+   keeps a hairline back to the spot it really means, so the map stays honest
+   about the lie it is telling for the sake of being clickable. */
+const dodged = places.filter((p) => p.dodge > 0.35);
+
+const px = (v: number) => (v / 100) * def.width;
+const py = (v: number) => (v / 100) * def.height;
+
+/*
+ * The home patch, in the artwork's own coordinates. Three marks in the
+ * map's own language: a pen ring round the Triangle with a wash inside it,
+ * a hand-drawn arrow to the lower right, and — where the Atlantic is empty
+ * — the same dashed inset box the artwork uses for Hawaiʻi and Puerto Rico,
+ * holding the Triangle's 18 spots as dots. "Enlarged here."
+ *
+ * Every stroke knows its own length (measured in mapView, because Safari
+ * ignores pathLength) so it can re-draw itself on hover.
+ */
+const ringX = (homeMarker.x / 100) * def.width;
+const ringY = (homeMarker.y / 100) * def.height;
+const ringR = (HOME_RING_R / 100) * def.width;
+const ring = inkLoop(ringX, ringY, ringR);
+const arrow = inkArrow(HOME_ARROW.x1, HOME_ARROW.y1, HOME_ARROW.x2, HOME_ARROW.y2);
+const box = {
+  x: px(HOME_INSET.x),
+  y: py(HOME_INSET.y),
+  w: px(HOME_INSET.w),
+  h: py(HOME_INSET.h),
+};
+const boxLabel = { x: box.x + HOME_INSET_PAD, y: box.y + box.h - 7 };
+
+/*
+ * The trips. Three on the US map, one same-day pair on the Triangle; the
+ * rule and the numbers are in mapView.ts under "pencil trip routes". A route
+ * is drawn under the discs and over the artwork, never takes the pointer,
+ * and follows the pins wherever the dodge put them.
+ *
+ * A page that is already showing a run's places in full ink holds its route
+ * open — which covers both /places/<slug> and /days/<iso> without either of
+ * them having to name a run: the places they light up are the run.
+ */
+const routeList = routes(space);
+const held = new Set(heldRoutes(space, lit).map((r) => r.id));
+const runBySlug = runOfPlace(space);
+
+/*
+ * The furniture (TODO B7): a north point and a scale bar, both in the map's
+ * own hand and both standing in the one part of the sheet with no ink on it
+ * — the Gulf of Mexico on the US map, the farmland south-east of Raleigh on
+ * the Triangle. The geometry, and the reason the compass is where it is, are
+ * in mapView.ts under "map furniture". The legend is not here: it did not
+ * fit, and it is a footnote under the map instead (see the note on
+ * LEGEND_KEYS, and src/pages/places.astro).
+ */
+const rose = compassRose(space);
+const bar = scaleBar(space);
+/* viewBox units -> percent of the sheet, which is what an HTML label hangs
+   on. preserveAspectRatio is xMidYMid meet and .map carries the artwork's
+   own aspect-ratio, so a percent is a percent in both spaces. */
+const pctX = (v: number) => ((v / def.width) * 100).toFixed(3);
+const pctY = (v: number) => ((v / def.height) * 100).toFixed(3);
+const ANCHOR = { start: '0%', end: '-100%' } as const;
+---
+
+<div class="map" data-space={space} style={`--vb-w:${def.width};--vb-h:${def.height}`}>
+  <div class="map__art" set:html={art} />
+
+  {/*
+    The north point and the scale, drawn on the paper and under everything
+    else on it. aria-hidden and pointer-events: none — they are a statement
+    about the drawing, and the sentence under the map says both of them in
+    words for anyone not looking at it.
+  */}
+  <svg
+    class="map__furniture"
+    viewBox={`0 0 ${def.width} ${def.height}`}
+    aria-hidden="true"
+    preserveAspectRatio="xMidYMid meet"
+  >
+    <defs>
+      {/*
+        Two filters, because the two shapes are different shapes.
+
+        The coastline's own is baseFrequency 0.012 — one wavelength every 83
+        units, which on a 68-unit needle is a lean, not a wobble. The ring's
+        0.05/0.07 is wound for a 62-unit circle. The needle is 22 x 68, so
+        0.05/0.045 puts one undulation across its width and about three down
+        its length, at scale 1.6 (+-0.8 units): a pen line that was not
+        ruled, on a shape whose half-width is only 11 units and which turns
+        to mush at the ring's 2.2.
+
+        The bar is the opposite shape — 167 x 9 on the US sheet — so it wants
+        a slow wave along its length and a fast one across it: 0.03 (one
+        every 33 units, four gentle bends in the bar) by 0.09 (one every 11,
+        so the top and bottom edges of a 9-unit box are displaced
+        differently and the box stops being a rigidly translated rectangle),
+        at scale 1.2.
+      */}
+      <filter id={`rose-wobble-${space}`} x="-25%" y="-15%" width="150%" height="130%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.05 0.045" numOctaves="2" seed="13" result="n" />
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="1.6" xChannelSelector="R" yChannelSelector="G" />
+      </filter>
+      <filter id={`bar-wobble-${space}`} x="-6%" y="-60%" width="112%" height="220%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.03 0.09" numOctaves="2" seed="17" result="n" />
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="1.2" xChannelSelector="R" yChannelSelector="G" />
+      </filter>
+    </defs>
+
+    <g class="map-rose" filter={`url(#rose-wobble-${space})`} data-tilt={rose.tilt}>
+      <path class="map-rose__north" d={rose.north} />
+      <path class="map-rose__south" d={rose.south} />
+    </g>
+
+    <g class="map-bar" filter={`url(#bar-wobble-${space})`} data-len={bar.length}>
+      <path class="map-bar__half" d={bar.half} />
+      <path class="map-bar__frame" d={bar.frame} />
+      <path class="map-bar__ticks" d={bar.ticks} />
+    </g>
+  </svg>
+
+  {/*
+    The three labels are HTML, not <text> inside that SVG, for the reason
+    the marker's count line already is: type in the viewBox scales with the
+    map, and this map is drawn at three sizes. 10.5 user units came out 8.5
+    px on /places at 1440, 5.0 px on a place page (the map is 476 px there)
+    and 3.9 px on a phone. A scale bar whose numbers cannot be read is a
+    decoration pretending to be a measurement. So the ink shrinks with the
+    sheet and the words do not — which is also why the gaps between them and
+    the marks are px and not map units.
+  */}
+  <div class="map__furn-lbls" aria-hidden="true">
+    <span class="map-furn__lbl map-furn__lbl--n" style={`--x:${pctX(rose.label.x)};--y:${pctY(rose.label.y)}`}>N</span>
+    {bar.labels.map((l) => (
+      <span
+        class="map-furn__lbl map-furn__lbl--num"
+        style={`--x:${pctX(l.x)};--y:${pctY(l.y)};--a:${ANCHOR[l.anchor]}`}
+      >{l.text}</span>
+    ))}
+  </div>
+
+  {dodged.length > 0 && (
+    <svg
+      class="map__dodge"
+      viewBox={`0 0 ${def.width} ${def.height}`}
+      aria-hidden="true"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      {dodged.map((p) => (
+        <g>
+          <line x1={px(p.trueX)} y1={py(p.trueY)} x2={px(p.x)} y2={py(p.y)} />
+          <circle cx={px(p.trueX)} cy={py(p.trueY)} r="2.6" />
+        </g>
+      ))}
+    </svg>
+  )}
+
+  {routeList.length > 0 && (
+    <svg
+      class="map__routes"
+      viewBox={`0 0 ${def.width} ${def.height}`}
+      aria-hidden="true"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <defs>
+        {/*
+          The coastline's own filter is baseFrequency 0.012 — one wavelength
+          every 83 units, which on a 60-unit leg is not a wobble but a bend.
+          The ring's is 0.05/0.07, wound tight for a 62-unit circle whose
+          outline is 340 units long. A leg is long, thin and short-lived, so
+          it wants something between the two: 0.034/0.042 puts roughly two
+          soft undulations along each leg — a pencil that was not held
+          against a ruler, rather than a line with a tremor.
+        */}
+        <filter id={`route-wobble-${space}`} x="-20%" y="-20%" width="140%" height="140%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.034 0.042" numOctaves="2" seed="11" result="n" />
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="2" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </defs>
+
+      {routeList.map((route) => (
+        <g
+          class:list={['map__route', held.has(route.id) && 'is-held']}
+          data-run={route.id}
+          filter={`url(#route-wobble-${space})`}
+        >
+          {route.segments.map((seg) => (
+            <path class:list={['map__seg', `seg--${seg.kind}`]} d={seg.d} />
+          ))}
+        </g>
+      ))}
+    </svg>
+  )}
+
+  <div class="map__pins">
+    {places.map((place) => (
+      <MapPin
+        place={place}
+        active={lit.has(place.slug)}
+        run={runBySlug.get(place.slug) ?? null}
+        {/* the page's own place already wears full ink; "same trip" is the
+            claim about the *other* pins on the line */}
+        held={!lit.has(place.slug) && held.has(runBySlug.get(place.slug) ?? '')}
+        href={place.slug === activeSlug ? null : withBase(`/places/${place.slug}`)}
+        transition={transition}
+      />
+    ))}
+
+    {showHome && (
+      <a
+        class="map-home"
+        href={homeHref}
+        data-level-to="triangle"
+        aria-label={`The Triangle — ${homeMarker.count} spots, ${homeMarker.species} birds`}
+      >
+        <svg
+          class="map-home__art"
+          viewBox={`0 0 ${def.width} ${def.height}`}
+          aria-hidden="true"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <defs>
+            {/* the coastline's wobble, at the scale of a pen ring: same
+                fractalNoise displacement, wound tighter for a smaller shape */}
+            <filter id={`ring-wobble-${space}`} x="-14%" y="-14%" width="128%" height="128%">
+              <feTurbulence type="fractalNoise" baseFrequency="0.05 0.07" numOctaves="3" seed="7" result="n" />
+              <feDisplacementMap in="SourceGraphic" in2="n" scale="2.2" xChannelSelector="R" yChannelSelector="G" />
+            </filter>
+          </defs>
+
+          <g filter={`url(#ring-wobble-${space})`}>
+            <circle class="map-home__wash" cx={ringX} cy={ringY} r={ringR * 0.92} />
+            <path class="map-home__ink" d={ring.d} />
+            {/* the second pen pass: invisible until hover, when it re-traces
+                the loop over the first one and leaves it in full ink */}
+            <path class="map-home__ink map-home__ink--trace" d={ring.d} style={`--len:${ring.length}`} />
+          </g>
+
+          <rect class="map-home__box" x={box.x} y={box.y} width={box.w} height={box.h} />
+          <rect class="map-home__box map-home__box--solid" x={box.x} y={box.y} width={box.w} height={box.h} />
+
+          {/* after the box, never before it: the head lands inside the box
+              and the box's translucent paper fill would otherwise wash the
+              last third of the arrow out to a grey ghost */}
+          <path class="map-home__arrow" d={arrow.shaft} />
+          <path class="map-home__arrow map-home__arrow--trace" d={arrow.shaft} style={`--len:${arrow.length}`} />
+          <path class="map-home__head" d={arrow.head} />
+
+          {homeInsetDots.map((dot, i) =>
+            dot.house ? (
+              <rect
+                class="map-home__house"
+                x={dot.x - 1.7}
+                y={dot.y - 1.7}
+                width="3.4"
+                height="3.4"
+                style={`--k:${i}`}
+              />
+            ) : (
+              <circle class="map-home__dot" cx={dot.x} cy={dot.y} r="2.2" style={`--k:${i}`} />
+            ),
+          )}
+
+          <text class="map-home__lbl" x={boxLabel.x} y={boxLabel.y}>The Triangle</text>
+
+          {/* the two hit areas: the ring and the box. The arrow is scenery. */}
+          <circle class="map-home__hit" cx={ringX} cy={ringY} r={ringR * 1.3} />
+          <rect class="map-home__hit" x={box.x} y={box.y} width={box.w} height={box.h} rx="10" />
+        </svg>
+
+        {/* the count is HTML, not SVG: it must keep its point size while the
+            map shrinks, the way the lede and the level bar do */}
+        <span
+          class="map-home__sub"
+          style={`--x:${HOME_INSET.x + HOME_INSET.w};--y:${(HOME_INSET.y + HOME_INSET.h + 0.9).toFixed(2)}`}
+        >
+          <span class="map-home__sub-full">{homeMarker.count} spots · {homeMarker.species} birds</span>
+          <span class="map-home__sub-short">Home</span>
+        </span>
+      </a>
+    )}
+  </div>
+
+  {routeList.length > 0 && (
+    <svg
+      class="map__routes map__routes--over"
+      viewBox={`0 0 ${def.width} ${def.height}`}
+      aria-hidden="true"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      {/*
+        The second pen pass, and the one layer on this map that is allowed
+        over a photograph.
+
+        Measured: a pin is 37-84 viewBox units wide and the places on one
+        trip are 57-116 apart, so a line between two tail tips spends 28% of
+        Colorado and 52% of New England behind somebody's disc — growing the
+        bow to 0.62 of the chord only moved New England to 43%, because the
+        north-east is eight overlapping photographs and there is nowhere for
+        a line to go. So the resting line stays under the pins, where
+        DESIGN2 §2.2 put it, and the full-ink copy comes over the top: ask
+        about a trip and the whole line is legible end to end. A pencil line
+        over a print is what an annotated map looks like anyway.
+
+        It no longer *draws itself* to get there. The owner asked for the
+        route-trace animation to go: the line was the drawing, the 480 ms
+        stroke across the map was a performance of it, and on a map you are
+        moving a pointer over it kept re-performing. What is left is a state,
+        not an event — the same ink, arriving as a crossfade like every other
+        hover on this site. The `--len` dash machinery went with it; the
+        measured lengths stay, because they are what mapView adds up to
+        report the run's total.
+      */}
+      {routeList.map((route) => (
+        <g
+          class:list={['map__route', held.has(route.id) && 'is-held']}
+          data-run={route.id}
+          filter={`url(#route-wobble-${space})`}
+        >
+          {route.segments.map((seg) => (
+            <path class="map__seg map__seg--case" d={seg.d} />
+          ))}
+          {route.segments.map((seg) => (
+            <path class="map__seg map__seg--trace" d={seg.d} />
+          ))}
+          {route.segments.map((seg) =>
+            seg.head ? <path class="map__head" d={seg.head} /> : null,
+          )}
+        </g>
+      ))}
+    </svg>
+  )}
+
+  {routeList.length > 0 && (
+    <div class="map__route-labels" aria-hidden="true">
+      {routeList.map((route) => (
+        <p
+          class:list={['map__route-lbl', 'meta', held.has(route.id) && 'is-held']}
+          data-run={route.id}
+          style={`--x:${route.labelX};--y:${route.labelY}`}
+        >
+          <span class="map__route-name">{route.labelHead}</span>
+          <span class="map__route-sub">{route.labelSub}</span>
+        </p>
+      ))}
+    </div>
+  )}
+</div>
+
+<script>
+  /*
+   * The signature detail: hover a bird in a place's grid and every other pin
+   * where that bird was also seen lights up. 110 of the 238 birds were seen
+   * in more than one place, one of them in thirteen.
+   *
+   * Delegated on the document, so it survives client-side navigation without
+   * re-binding; astro:page-load only clears whatever was lit on the old page.
+   */
+  const LIT = 'is-lit';
+  let current: HTMLElement | null = null;
+
+  function mapsOf(node: Document | HTMLElement) {
+    return Array.from(node.querySelectorAll<HTMLElement>('.map'));
+  }
+
+  function clearGlow() {
+    current = null;
+    document.querySelectorAll<HTMLElement>('.map-pin.' + LIT).forEach((p) => p.classList.remove(LIT));
+    mapsOf(document).forEach((m) => {
+      m.classList.remove('is-glowing');
+      m.style.removeProperty('--glow');
+    });
+    /* emptied, never hidden: the box keeps its two reserved lines so the
+       footer under it does not move when a bird is hovered (TODO C5) */
+    document.querySelectorAll<HTMLElement>('[data-map-else]').forEach((el) => {
+      el.textContent = '';
+    });
+  }
+
+  function glow(item: HTMLElement) {
+    if (item === current) return;
+    const slugs = (item.dataset.locs ?? '').split(/\s+/).filter(Boolean);
+    if (!slugs.length) return;
+    const tkey = item.dataset.tkey || 'other';
+
+    clearGlow();
+    current = item;
+    let hits = 0;
+    for (const slug of slugs) {
+      document
+        .querySelectorAll<HTMLElement>(`.map-pin[data-place="${CSS.escape(slug)}"]`)
+        .forEach((pin) => {
+          pin.classList.add(LIT);
+          hits += 1;
+        });
+    }
+    if (!hits) return;
+
+    mapsOf(document).forEach((m) => {
+      m.classList.add('is-glowing');
+      m.style.setProperty('--glow', `var(--t-${tkey})`);
+    });
+
+    /*
+     * Places on the other map cannot glow — say them instead (TODO C5).
+     *
+     * Two things were wrong with the line this replaces. It said "the other
+     * map", which is only a direction if you already know which sheet you
+     * are on; and it printed every name, which for Northern Mockingbird at
+     * Wilmington is ten of them — measured at 1440, 201 characters, four
+     * lines, and it pushed "← the whole map" 75 px down the sticky column
+     * on hover. So: name the sheet, lead with the count, and spend a fixed
+     * budget of characters on names before handing the rest to "and n more".
+     * The footer reserves the two lines this can fill (see place__foot in
+     * places/[slug].astro), so nothing below it ever moves.
+     */
+    const elsewhere = item.dataset.else;
+    const elseMap = item.dataset.elsemap || 'the other map';
+    document.querySelectorAll<HTMLElement>('[data-map-else]').forEach((el) => {
+      el.textContent = elsewhere ? elseLine(elsewhere, elseMap) : '';
+    });
+  }
+
+  /** "also on the US map · 7 places: Denver, CO · Seattle, WA and 5 more" */
+  const NAME_BUDGET = 44;
+  function elseLine(joined: string, where: string): string {
+    const names = joined.split(' · ').filter(Boolean);
+    const head = `also on ${where} · ${names.length} ${names.length === 1 ? 'place' : 'places'}`;
+    const shown: string[] = [];
+    let spent = 0;
+    for (const n of names) {
+      if (shown.length && spent + n.length > NAME_BUDGET) break;
+      shown.push(n);
+      spent += n.length + 3;
+    }
+    const rest = names.length - shown.length;
+    return `${head}: ${shown.join(' · ')}${rest ? ` and ${rest} more` : ''}`;
+  }
+
+  function itemFrom(target: EventTarget | null): HTMLElement | null {
+    return target instanceof Element ? target.closest<HTMLElement>('[data-locs]') : null;
+  }
+
+  /*
+   * The flip-book. A pin's face is one bird out of up to fifty; dwell on it
+   * and it turns over the rest of its deck, naming each one under the place.
+   *
+   * Nothing is fetched until the pointer arrives (the deck is display:none,
+   * so Chrome skips the lazy images), and nothing turns for half a second
+   * after that — a pointer crossing the map on its way somewhere else never
+   * starts a single request. Reduced motion arms nothing: the face stays.
+   */
+  const DWELL = 500;
+  const STEP = 700;
+
+  let flipPin: HTMLElement | null = null;
+  let flipCards: HTMLElement[] = [];
+  let flipLabel: HTMLElement | null = null;
+  let flipAt = 0;
+  let dwellTimer = 0;
+  let stepTimer = 0;
+
+  const stillMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function stopFlip() {
+    clearTimeout(dwellTimer);
+    clearTimeout(stepTimer);
+    if (flipPin) {
+      flipPin.classList.remove('is-armed', 'is-flipping');
+      flipCards.forEach((c) => c.classList.remove('is-on'));
+    }
+    flipPin = null;
+    flipCards = [];
+    flipLabel = null;
+  }
+
+  function showCard(i: number) {
+    if (!flipPin) return;
+    flipAt = i % flipCards.length;
+    flipCards.forEach((c, k) => c.classList.toggle('is-on', k === flipAt));
+    if (flipLabel) flipLabel.textContent = flipCards[flipAt].dataset.name ?? '';
+    flipPin.classList.add('is-flipping');
+    stepTimer = window.setTimeout(() => showCard(flipAt + 1), STEP);
+  }
+
+  function startFlip(pin: HTMLElement) {
+    if (pin === flipPin) return;
+    stopFlip();
+    /* nothing turns and nothing is fetched when motion is unwelcome */
+    if (!pin.dataset.deck || stillMotion()) return;
+    const cards = Array.from(pin.querySelectorAll<HTMLElement>('.map-pin__card'));
+    if (!cards.length) return;
+    flipPin = pin;
+    flipCards = cards;
+    flipLabel = pin.querySelector<HTMLElement>('.map-pin__bird');
+    /* give the images a box so they load; the dwell covers the fetch */
+    pin.classList.add('is-armed');
+    dwellTimer = window.setTimeout(() => showCard(0), DWELL);
+  }
+
+  function pinFrom(target: EventTarget | null): HTMLElement | null {
+    return target instanceof Element ? target.closest<HTMLElement>('.map-pin[data-deck]') : null;
+  }
+
+  /*
+   * The trips. Hovering any pin of a run brings its pencil line up in full
+   * ink over the photographs, lights its other places and names the trip.
+   *
+   * Deliberately NOT the bird glow's machinery: this is a different claim
+   * ("the same journey", not "the same bird"), it uses --ink-soft rather
+   * than a type colour, and the rest of the map does not step back to 0.3 —
+   * so it gets its own class and its own clear, and the two can never wipe
+   * each other. `is-held` is the server's, for a page that already is the
+   * trip, and nothing here touches it.
+   */
+  const TRIP = 'is-trip';
+  let tripRun: string | null = null;
+
+  function clearTrip() {
+    if (tripRun === null) return;
+    tripRun = null;
+    document
+      .querySelectorAll<HTMLElement>('.' + TRIP)
+      .forEach((el) => el.classList.remove(TRIP));
+  }
+
+  function trip(pin: HTMLElement) {
+    const id = pin.dataset.run;
+    if (!id || id === tripRun) return;
+    const map = pin.closest<HTMLElement>('.map');
+    if (!map) return;
+    clearTrip();
+    tripRun = id;
+    const sel = CSS.escape(id);
+    map
+      .querySelectorAll<HTMLElement>(
+        `.map-pin[data-run="${sel}"], .map__route[data-run="${sel}"], .map__route-lbl[data-run="${sel}"]`,
+      )
+      .forEach((el) => el.classList.add(TRIP));
+  }
+
+  function runFrom(target: EventTarget | null): HTMLElement | null {
+    return target instanceof Element ? target.closest<HTMLElement>('.map-pin[data-run]') : null;
+  }
+
+  document.addEventListener('pointerover', (e) => {
+    const item = itemFrom(e.target);
+    if (item) glow(item);
+    else if (current) clearGlow();
+
+    const pin = pinFrom(e.target);
+    if (pin) startFlip(pin);
+    else if (flipPin) stopFlip();
+
+    const onRun = runFrom(e.target);
+    if (onRun) trip(onRun);
+    else clearTrip();
+  });
+  document.addEventListener('focusin', (e) => {
+    const item = itemFrom(e.target);
+    if (item) glow(item);
+    else clearGlow();
+
+    const pin = pinFrom(e.target);
+    if (pin) startFlip(pin);
+    else stopFlip();
+
+    const onRun = runFrom(e.target);
+    if (onRun) trip(onRun);
+    else clearTrip();
+  });
+  document.addEventListener('astro:page-load', () => {
+    clearGlow();
+    stopFlip();
+    clearTrip();
+  });
+  document.addEventListener('bird:open', () => {
+    clearGlow();
+    stopFlip();
+    clearTrip();
+  });
+</script>
+
+<style>
+  .map {
+    position: relative;
+    width: 100%;
+    aspect-ratio: var(--vb-w) / var(--vb-h);
+    /* a pin is a percentage of this box, so it shrinks with the coastline
+       and the dodge computed in mapView.ts holds at every width */
+    --pin-k: 1;
+  }
+
+  .map__art,
+  .map__dodge,
+  .map__pins {
+    position: absolute;
+    inset: 0;
+  }
+
+  .map__art :global(svg) {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ---------------------------------------------------------------------
+     How big the artwork's own type is, in the artwork's own units.
+
+     The town names are <text> inside the viewBox, so they scale with the
+     sheet: 15 units is 12px on /places at 1440 and 4.5px on a place page in
+     a 900px window — a size at which a name is texture, not a label
+     (AUDIT2 §3.1). The furniture labels next door solved this by being HTML
+     ("the ink shrinks with the sheet and the words do not"); the artwork
+     cannot, because the names are part of the drawing and have to stay with
+     the coastline they name.
+
+     So the size steps back up as the sheet shrinks. The query is on the
+     map's own box, not on the window — the same component is drawn at
+     811px on /places and 482px on a place page at the identical viewport,
+     and only the box knows which. The steps keep the names between about 8
+     and 12px everywhere, and stop short of the scale at which a name would
+     be wider than the county it sits in.
+     --------------------------------------------------------------------- */
+  .map__art {
+    container-type: inline-size;
+  }
+  @container (max-width: 820px) {
+    .map__art :global(.map-root) { --map-label-scale: 1.15; }
+  }
+  @container (max-width: 660px) {
+    .map__art :global(.map-root) { --map-label-scale: 1.3; }
+  }
+  @container (max-width: 520px) {
+    .map__art :global(.map-root) { --map-label-scale: 1.45; }
+  }
+  @container (max-width: 400px) {
+    .map__art :global(.map-root) { --map-label-scale: 1.6; }
+  }
+
+  .map__pins {
+    /* the label pill of an edge pin may lean outside the coastline */
+    overflow: visible;
+  }
+
+  .map__dodge {
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  /* ---------------------------------------------------------------------
+     The furniture (TODO B7). A north point and a scale bar, drawn in the
+     same hand as the coastline and standing on the paper under everything
+     else. Neither takes the pointer; neither is in the accessibility tree.
+     --------------------------------------------------------------------- */
+  .map__furniture {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  /*
+   * Quieter than the Triangle marker and quieter than a pin: this is what
+   * the map says about itself, not what it says about the birds. --ink-soft
+   * at 0.62 sits a shade above the coastline's own edge and well below the
+   * 0.8 the pen ring is drawn at, so the eye finds the photographs first
+   * and the furniture when it goes looking.
+   */
+  .map-rose,
+  .map-bar { opacity: 0.62; }
+
+  .map-rose__north,
+  .map-bar__half {
+    fill: var(--ink-soft);
+    stroke: none;
+  }
+  /* the open half. Without it a filled kite is a dart, not a needle. */
+  .map-rose__south {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1.1;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+  .map-bar__frame,
+  .map-bar__ticks {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .map__furn-lbls {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  /* the same voice as "THE TRIANGLE" on the inset box */
+  .map-furn__lbl {
+    position: absolute;
+    left: calc(var(--x) * 1%);
+    top: calc(var(--y) * 1%);
+    font-family: var(--serif);
+    font-size: var(--fs-micro);
+    line-height: 1;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    /* A scale bar's numerals are text a sighted reader has to read, and at
+       10.88px --ink-faint measured 3.81:1 light / 3.37:1 dark on the land
+       fill — the furniture is quiet, not unreadable (AUDIT2 §3.3). */
+    color: var(--ink-soft);
+  }
+  /* the N hangs over the needle's point; the numbers hang under the bar's
+     bottom edge. Both gaps are px, because the type is px and the map is not */
+  .map-furn__lbl--n { transform: translate(-50%, -100%); margin-top: -5px; }
+  .map-furn__lbl--num {
+    transform: translate(var(--a), 0);
+    margin-top: 4px;
+    font-family: var(--sans);
+    letter-spacing: 0.06em;
+    /* "500 MI" shouts; the unit on a scale bar is lower case */
+    text-transform: none;
+  }
+
+  /* where a pin really is, and how far it had to step aside to be clickable */
+  .map__dodge line,
+  .map__dodge circle {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    opacity: 0.5;
+  }
+
+  /* ---------------------------------------------------------------------
+     The trips. A pencil line between two pins is the only thing on this map
+     that says the birds were somewhere in an order: 49 birds over four days
+     in Colorado is a drive, not a list. Drawn under the discs, over the
+     artwork, and never in the way of a click.
+     --------------------------------------------------------------------- */
+  .map__routes {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    /* a route never steals a click from a pin, a leader or the marker */
+    pointer-events: none;
+  }
+
+  /* the full-ink layer: over the pins, under the Triangle marker */
+  .map__routes--over { z-index: 134; }
+
+  .map__route {
+    /* 0.38 over the grain is a line you have to look for — the map's story
+       at rest is still the photographs */
+    opacity: 0.38;
+    transition: opacity 220ms var(--ease);
+  }
+  .map__route.is-trip,
+  .map__route.is-held { opacity: 0.9; }
+  /* the layer that draws over the photographs is invisible until asked */
+  .map__routes--over .map__route { opacity: 0; }
+  .map__routes--over .map__route.is-trip,
+  .map__routes--over .map__route.is-held { opacity: 1; }
+
+  /*
+   * Asked for, the line is full ink at 1.7. DESIGN2 §2.2 says --ink-soft at
+   * 1.3 throughout, and at rest that is exactly right — but §5.2 had already
+   * learned this on the Triangle arrow: against the grained paper --ink-soft
+   * lets the one mark you asked for sink into the texture. Measured at 1:1
+   * in the north-east, where the line is half behind photographs, 1.3 of
+   * soft ink was a whisper. At rest it stays soft and thin.
+   */
+  .map__routes--over .map__seg--trace,
+  .map__routes--over .map__head {
+    stroke: var(--ink);
+    stroke-width: 1.7;
+  }
+
+  .map__seg {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+  /* two different days: dashed, and it knows which way it went */
+  .map__seg.seg--days { stroke-dasharray: 6 4; }
+  /* one day, two places, no time of day anywhere in the data: dotted and
+     undirected, because the order is not knowable (DESIGN2 §0.4) */
+  .map__seg.seg--same { stroke-dasharray: 1.5 3.5; }
+
+  /*
+   * The second pen pass, exactly over the first.
+   *
+   * It used to draw itself: each leg carried its measured `--len` as a dash
+   * the width of the whole path, and `is-trip` released the offset so the
+   * stroke ran from the run's first place to its last in 480 ms. The owner
+   * asked for that animation to go ("where 的地图上去掉路线轨迹动画"), and
+   * they are right — the line is the drawing, and re-drawing it every time a
+   * pointer crossed a pin turned a map into a demo. The whole `--len` /
+   * `--trace-dly` / `--trace-dur` apparatus went with it; nothing on this
+   * layer is timed against anything else any more.
+   *
+   * What answers a hover now is the parent group's own opacity crossfade
+   * (220 ms, above) — the same fade every other hover on this site uses.
+   * The lit state is unchanged: full --ink at 1.7 over the photographs, the
+   * other pins on the run ringed, the label up.
+   */
+  /* `.map__seg--trace` itself carries no rule any more — its ink and weight
+     come from `.map__routes--over` above. The class stays because it is what
+     that selector and the casing below are written against. */
+  /* a hair of paper under the pen, so the line still reads where it crosses
+     a dark photograph — the casing a drawn line has on any printed map */
+  .map__seg--case {
+    stroke: var(--paper);
+    stroke-width: 4.2;
+    opacity: 0.75;
+  }
+
+  .map__head {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+    /* five arrowheads on the east coast at rest would be a diagram */
+    opacity: 0;
+    transition: opacity 120ms var(--ease);
+  }
+  /* The arrowhead used to wait 400 ms for the pen to reach it. There is no
+     pen to wait for; it arrives with the line it belongs to. */
+  .map__route.is-trip .map__head,
+  .map__route.is-held .map__head {
+    opacity: 1;
+    transition: opacity 140ms var(--ease);
+  }
+
+  /* the label is HTML, not SVG: it keeps its point size while the map
+     shrinks, exactly like the marker's count line */
+  .map__route-labels {
+    position: absolute;
+    inset: 0;
+    /* over the pins, under the Triangle marker (140): a pill of paper that
+       was chopped in half by a photograph would be worse than one that
+       covers a corner of it, and it is only ever up while you point at it */
+    z-index: 135;
+    pointer-events: none;
+  }
+
+  .map__route-lbl {
+    position: absolute;
+    left: calc(var(--x) * 1%);
+    top: calc(var(--y) * 1%);
+    transform: translate(-50%, -100%) translateY(-14px);
+    margin: 0;
+    padding: 0.15em 0.5em;
+    background: var(--paper);
+    text-align: center;
+    white-space: nowrap;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    color: var(--ink-faint);
+    opacity: 0;
+    transition: opacity 200ms var(--ease);
+  }
+  /* 120 ms, not the old 300: the delay was the pen's head start, and its
+     second job — not flashing a pill at every pointer that sweeps across a
+     pin on its way somewhere else — is done by a fifth of a second just as
+     well. The line and its name now arrive together. */
+  .map__route-lbl.is-trip,
+  .map__route-lbl.is-held {
+    opacity: 1;
+    transition: opacity 200ms var(--ease) 120ms;
+  }
+  .map__route-name,
+  .map__route-sub { display: block; }
+  .map__route-name { color: var(--ink-soft); }
+
+  @media (max-width: 560px) {
+    /* the lines still scale and still read — 1.3px is 1.3px at any width —
+       but a paper pill of 11px type over a 350px map is a blindfold */
+    .map__route-lbl { display: none; }
+  }
+
+  /* the inset labels are 11px on the paper: they need their full ink */
+  .map__art :global(.label.sm) { opacity: 1; }
+
+  /* ---------------------------------------------------------------------
+     The way in to the second level. Not a pin and not a label: a circled
+     region, an arrow, and an inset box with the Triangle's 18 spots in it.
+     Hover re-draws the whole thing, pen stroke by pen stroke.
+     --------------------------------------------------------------------- */
+  .map-home {
+    position: absolute;
+    inset: 0;
+    color: inherit;
+    text-decoration: none;
+    z-index: 140;
+    /* the map between the ring and the box is map, not link: a pin under
+       it stays clickable */
+    pointer-events: none;
+  }
+
+  .map-home__art {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .map-home__hit {
+    fill: transparent;
+    pointer-events: all;
+    cursor: zoom-in;
+  }
+
+  /* --- the ring ------------------------------------------------------- */
+
+  .map-home__wash {
+    /* "this area", the way a highlighter would say it. 0.07 rather than the
+       0.05 the spec asked for: the paper grain that landed under this map
+       eats the first two hundredths. */
+    fill: var(--ink);
+    fill-opacity: 0.07;
+    pointer-events: none;
+    transition: fill-opacity 240ms var(--ease);
+  }
+
+  .map-home__ink {
+    fill: none;
+    /* full ink at four-fifths strength: on the dark map --ink-soft
+       disappears into the slate */
+    stroke: var(--ink);
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.8;
+    pointer-events: none;
+  }
+  /*
+   * The second pass. It lies exactly on the first, so it never changes the
+   * shape — only how much of it is inked. At rest the dash offset hides it
+   * completely; hovering runs the pen round the loop again, and leaving
+   * un-draws it, which is the right feel for a pen.
+   *
+   * --len is the path's length in viewBox units, measured at build time in
+   * mapView.ts. SVG's pathLength would be simpler, but Safari ignores it.
+   */
+  .map-home__ink--trace {
+    opacity: 1;
+    stroke-dasharray: var(--len) var(--len);
+    stroke-dashoffset: var(--len);
+    transition: stroke-dashoffset 240ms var(--ease);
+  }
+
+  /* --- the arrow ------------------------------------------------------ */
+
+  .map-home__arrow,
+  .map-home__head {
+    fill: none;
+    /* DESIGN2 5.2: full ink held back to .7, not --ink-soft — against the
+       grained paper the soft ink let the one element the owner asked for
+       sink into the texture. */
+    stroke: var(--ink);
+    opacity: 0.7;
+    /* non-scaling so the arrow is still an arrow on a 350px map, where
+       1.8 user units would come out at two thirds of a pixel */
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+    vector-effect: non-scaling-stroke;
+  }
+  .map-home__head { transition: opacity 240ms var(--ease); }
+  .map-home__arrow--trace {
+    opacity: 1;
+    stroke-dasharray: var(--len) var(--len);
+    stroke-dashoffset: var(--len);
+    transition: stroke-dashoffset 240ms var(--ease);
+  }
+
+  /* --- the inset box -------------------------------------------------- */
+
+  .map-home__box {
+    /* the same idiom as the Hawaiʻi and Puerto Rico boxes in the artwork */
+    fill: var(--paper);
+    fill-opacity: 0.6;
+    stroke: var(--ink-faint);
+    stroke-width: 1.6;
+    stroke-dasharray: 7 6;
+    stroke-linecap: round;
+    rx: 10;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+    transition: fill-opacity 240ms var(--ease);
+  }
+  .map-home__box--solid {
+    fill: none;
+    stroke: var(--ink);
+    stroke-dasharray: none;
+    opacity: 0;
+    transition: opacity 240ms var(--ease), stroke-width var(--dur-fast) var(--ease);
+  }
+
+  .map-home__dot,
+  .map-home__house {
+    fill: var(--ink-soft);
+    opacity: 0.7;
+    pointer-events: none;
+    transform-box: fill-box;
+    transform-origin: center;
+    transition: transform 220ms var(--ease), fill 220ms var(--ease), opacity 220ms var(--ease);
+  }
+  /* 金玉公寓 keeps the house it wears on the Triangle map: a hollow square */
+  .map-home__house {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    transition: transform 220ms var(--ease), stroke 220ms var(--ease), opacity 220ms var(--ease);
+  }
+
+  .map-home__lbl {
+    font-family: var(--serif);
+    font-size: 11.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    fill: var(--ink-faint);
+    pointer-events: none;
+    transition: fill var(--dur) var(--ease);
+  }
+
+  .map-home__sub {
+    position: absolute;
+    left: calc(var(--x) * 1%);
+    top: calc(var(--y) * 1%);
+    transform: translateX(-100%);
+    display: block;
+    white-space: nowrap;
+    text-align: right;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    color: var(--ink-faint);
+    pointer-events: auto;
+    cursor: zoom-in;
+    transition: color var(--dur) var(--ease);
+  }
+  .map-home__sub-short { display: none; }
+
+  /* --- hover / focus-visible ------------------------------------------ */
+
+  .map-home:hover .map-home__ink--trace,
+  .map-home:focus-visible .map-home__ink--trace {
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset 620ms var(--ease);
+  }
+  .map-home:hover .map-home__wash,
+  .map-home:focus-visible .map-home__wash {
+    fill-opacity: 0.15;
+    transition-duration: 260ms;
+  }
+
+  .map-home:hover .map-home__arrow--trace,
+  .map-home:focus-visible .map-home__arrow--trace {
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset 360ms var(--ease) 180ms;
+  }
+  .map-home:hover .map-home__head,
+  .map-home:focus-visible .map-home__head {
+    opacity: 1;
+    transition: opacity 120ms var(--ease) 420ms;
+  }
+
+  .map-home:hover .map-home__box,
+  .map-home:focus-visible .map-home__box {
+    fill-opacity: 0.85;
+    transition: fill-opacity 260ms var(--ease) 380ms;
+  }
+  .map-home:hover .map-home__box--solid,
+  .map-home:focus-visible .map-home__box--solid {
+    opacity: 1;
+    transition: opacity 260ms var(--ease) 380ms;
+  }
+  /* SVG cannot take an outline, so the solid box is the focus ring */
+  .map-home:focus-visible .map-home__box--solid { stroke-width: 2.4; }
+
+  .map-home:hover .map-home__dot,
+  .map-home:focus-visible .map-home__dot,
+  .map-home:hover .map-home__house,
+  .map-home:focus-visible .map-home__house {
+    opacity: 1;
+    transform: scale(1.35);
+    transition-delay: calc(300ms + var(--k) * 12ms);
+  }
+  .map-home:hover .map-home__dot,
+  .map-home:focus-visible .map-home__dot { fill: var(--ink); }
+  .map-home:hover .map-home__house,
+  .map-home:focus-visible .map-home__house { stroke: var(--ink); }
+
+  .map-home:hover .map-home__lbl,
+  .map-home:focus-visible .map-home__lbl { fill: var(--ink); }
+  .map-home:hover .map-home__sub,
+  .map-home:focus-visible .map-home__sub { color: var(--ink); }
+
+  @media (max-width: 560px) {
+    /* four-pixel type is noise: the box speaks for itself down here, and
+       the count shrinks to the one word that matters */
+    .map-home__lbl { display: none; }
+    .map-home__sub { font-size: 9px; }
+    .map-home__sub-full { display: none; }
+    .map-home__sub-short { display: inline; }
+  }
+</style>

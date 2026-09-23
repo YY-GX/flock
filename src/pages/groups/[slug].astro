@@ -1,0 +1,358 @@
+---
+/**
+ * One group, opened. The bubble on /groups blows up into this page.
+ *
+ * This is where the tags finally surface — 43 of them, counted from the data
+ * and not from Notion's 63 schema options, which CLAUDE.md warns against —
+ * as secondary filter
+ * chips, showing only the tags that actually occur in this group, each with
+ * its count. Filtering is instant and client-side — every bird is already in
+ * the DOM, the chips only hide rows — and the chosen chip is written into
+ * the URL hash, so a filtered group is shareable.
+ *
+ * It is a real page: deep-linkable, works with no JavaScript (you get the
+ * whole group, unfiltered, which is the honest fallback).
+ */
+import Base from '../../layouts/Base.astro';
+import BirdThumb from '../../components/BirdThumb.astro';
+import BirdPanel from '../../components/BirdPanel.astro';
+import { birds, photosById } from '../../lib/data';
+import { buildGroups, slugify } from '../../lib/groupsView';
+import type { Group } from '../../lib/groupsView';
+import { withBase } from '../../lib/paths';
+
+export async function getStaticPaths() {
+  const hasPhoto = (bird: { photoIds?: string[] }) =>
+    (bird.photoIds ?? []).some((id) => (photosById.get(id)?.files?.length ?? 0) > 0);
+
+  const all = buildGroups(
+    birds.filter((b) => b.spotted),
+    hasPhoto,
+  );
+
+  return all.map((group) => ({
+    params: { slug: group.slug },
+    props: { group, siblings: all.map((g) => ({ slug: g.slug, label: g.label, count: g.count })) },
+  }));
+}
+
+interface SiblingLink {
+  slug: string;
+  label: string;
+  count: number;
+}
+
+const { group, siblings } = Astro.props as { group: Group; siblings: SiblingLink[] };
+
+const plural = group.count === 1 ? 'bird' : 'birds';
+const noPhoto = group.count - group.withPhoto.length;
+---
+
+<Base
+  title={`${group.label} · Birding Checklist`}
+  description={`${group.count} ${plural} in ${group.label}, filterable by ${group.tags.length} tags.`}
+>
+  <section class="page group" style={`--t: ${group.colour}`}>
+    <header class="page__head">
+      <p class="eyebrow"><a class="back" href={withBase("/groups")}>← All nine groups</a></p>
+      <h1 class="display">{group.label}</h1>
+      <p class="lede">
+        {group.count}
+        {plural}, in {group.tags.length}
+        {group.tags.length === 1 ? 'tag' : 'tags'}.
+        {noPhoto > 0 &&
+          ` ${noPhoto === 1 ? 'One of them is' : `${noPhoto} of them are`} still waiting to be photographed.`}
+      </p>
+    </header>
+
+    <div class="chips" role="group" aria-label={`Filter ${group.label} by tag`} data-chips>
+      <button class="chip is-on" type="button" data-tag="" aria-pressed="true">
+        <span class="chip__name">All</span>
+        <span class="chip__n">{group.count}</span>
+      </button>
+      {
+        group.tags.map((t) => (
+          <button class="chip" type="button" data-tag={t.slug} aria-pressed="false">
+            <span class="chip__name">{t.tag}</span>
+            <span class="chip__n">{t.count}</span>
+          </button>
+        ))
+      }
+    </div>
+
+    <p class="meta count" data-count aria-live="polite">
+      Showing all {group.count}
+      {plural}.
+    </p>
+
+    <ul class="grid" data-grid>
+      {
+        group.birds.map((bird) => (
+          <li class="cell" data-tags={(bird.tags ?? []).map(slugify).join(' ')}>
+            <BirdThumb bird={bird} size={168} style="width:100%" />
+          </li>
+        ))
+      }
+    </ul>
+
+    <nav class="others" aria-label="The other groups">
+      {
+        siblings
+          .filter((s) => s.slug !== group.slug)
+          .map((s) => (
+            <a href={withBase(`/groups/${s.slug}`)}>
+              {s.label} <span class="others__n">{s.count}</span>
+            </a>
+          ))
+      }
+    </nav>
+  </section>
+
+  <BirdPanel birds={group.birds} />
+</Base>
+
+<script>
+  /*
+   * The tag filter. Everything is already rendered; a chip only decides
+   * which cells are hidden, so it is one class flip and a pass over the
+   * list — instant at 109 cells, and it never touches the network.
+   *
+   * Hiding cells re-flows the grid, and at 109 birds a cell can travel most
+   * of the window's width to reach its new place. Done bare that is a jump:
+   * the audit measured raw layout-shift 0.394 on /groups/perching at 1440.
+   * Every thumbnail already carries view-transition-name: bird-<slug> from
+   * <BirdThumb>, so handing the mutation to startViewTransition makes each
+   * bird glide from its old cell to its new one instead. The readout and
+   * the "other eight" nav get names of their own so they travel too rather
+   * than ghosting inside the root snapshot.
+   *
+   * What that is and is not worth, measured on the same page and window:
+   *
+   *   - Core Web Vitals CLS is 0.000 — a real click sets hadRecentInput, so
+   *     this interaction never counted against the metric, before or after.
+   *   - The *raw* layout-shift score barely moves: 0.394 -> 0.357. It cannot
+   *     go to ~0 while this is a CSS grid. Removing 93 of 109 cells moves the
+   *     survivors, and the layout-shift API scores box positions. Only a
+   *     transform-positioned grid (absolute cells, explicit height, JS
+   *     re-layout on resize) would read 0, and that trades the whole no-JS
+   *     grid away for a number nothing is reading.
+   *   - What actually changed is what the eye gets. The single shift entry
+   *     is timestamped inside the capture window (paint 1597ms, shift
+   *     1610ms, ready 1619ms): the reflow happens while the screen is still
+   *     holding the old snapshot, so it is never painted. Between ready and
+   *     finished (1619 -> 1958ms) the birds glide to their new cells. One
+   *     67ms frame at capture, no long task, everything else at 60fps.
+   *
+   * So: the score is honest about the layout and wrong about the experience.
+   * Do not chase it to zero — check the glide instead.
+   */
+  function setup() {
+    const chips = document.querySelector<HTMLElement>('[data-chips]');
+    const grid = document.querySelector<HTMLElement>('[data-grid]');
+    const readout = document.querySelector<HTMLElement>('[data-count]');
+    if (!chips || !grid || chips.dataset.wired === '1') return;
+    chips.dataset.wired = '1';
+
+    const buttons = Array.from(chips.querySelectorAll<HTMLButtonElement>('button[data-tag]'));
+    const cells = Array.from(grid.querySelectorAll<HTMLElement>('.cell'));
+
+    const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function apply(tag: string, push: boolean, glide = false) {
+      const keep = cells.filter((cell) => {
+        const tags = (cell.dataset.tags ?? '').split(' ').filter(Boolean);
+        return !tag || tags.includes(tag);
+      });
+      const shown = keep.length;
+
+      /* the chip answers the click straight away, transition or not */
+      let label = 'All';
+      for (const b of buttons) {
+        const on = (b.dataset.tag ?? '') === tag;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', String(on));
+        if (on) label = b.querySelector('.chip__name')?.textContent ?? label;
+      }
+
+      const paint = () => {
+        const on = new Set(keep);
+        for (const cell of cells) cell.hidden = !on.has(cell);
+        if (readout) {
+          readout.textContent = tag
+            ? `${shown} ${shown === 1 ? 'bird' : 'birds'} tagged ${label}.`
+            : `Showing all ${shown} ${shown === 1 ? 'bird' : 'birds'}.`;
+        }
+      };
+
+      const start = (document as any).startViewTransition;
+      if (glide && !still() && typeof start === 'function') {
+        const root = document.documentElement;
+        root.classList.add('is-filtering');
+        const done = () => root.classList.remove('is-filtering');
+        try {
+          start.call(document, paint).finished.then(done, done);
+        } catch {
+          paint();
+          done();
+        }
+      } else {
+        paint();
+      }
+
+      if (push) {
+        const url = new URL(location.href);
+        url.hash = tag ? `tag-${tag}` : '';
+        history.replaceState(history.state, '', url.href.replace(/#$/, ''));
+      }
+    }
+
+    chips.addEventListener('click', (e) => {
+      const b = (e.target as Element | null)?.closest<HTMLButtonElement>('button[data-tag]');
+      if (!b) return;
+      apply(b.dataset.tag ?? '', true, true);
+    });
+
+    const fromHash = location.hash.startsWith('#tag-') ? location.hash.slice(5) : '';
+    if (fromHash && buttons.some((b) => b.dataset.tag === fromHash)) apply(fromHash, false);
+  }
+
+  setup();
+  document.addEventListener('astro:page-load', setup);
+</script>
+
+<style>
+  .back {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.15em;
+  }
+  .back:hover {
+    color: var(--ink);
+    border-bottom-color: var(--t);
+  }
+
+  /* --- the tag chips --- */
+
+  /* .page has no side padding of its own, so each block takes the gutter */
+  .chips,
+  .count,
+  .grid,
+  .others {
+    padding-inline: var(--gutter);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    margin-top: var(--head-gap);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.4em;
+    margin: 0;
+    padding: 0.3em 0 0.35em;
+    font: inherit;
+    font-family: var(--sans);
+    font-size: var(--fs-tiny);
+    color: var(--ink-soft);
+    background: none;
+    border: 0;
+    border-bottom: 1px solid var(--rule-soft);
+    cursor: pointer;
+    appearance: none;
+    transition:
+      color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease);
+  }
+  .chip:hover {
+    color: var(--ink);
+    border-bottom-color: var(--rule);
+  }
+  .chip.is-on {
+    color: var(--ink);
+    border-bottom-color: var(--t);
+  }
+  /* The group's colour marks the chip's rule, never its digits: at
+     var(--fs-micro) the nine type colours sit between 2.3:1 and 3.6:1 on
+     paper — fine as a mark, illegible as a number. --ink-faint is the
+     quietest ink that still clears AA. */
+  .chip__n {
+    font-size: var(--fs-micro);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-faint);
+  }
+
+  .count {
+    margin-top: 1.1rem;
+  }
+
+  /* --- filtering is a reorder, not a new page --- */
+
+  /* these two move when the grid grows or shrinks; named, they travel with
+     the birds instead of ghosting inside the root snapshot */
+  .count {
+    view-transition-name: group-count;
+  }
+  .others {
+    view-transition-name: group-others;
+  }
+
+  /* the paper itself is not changing, so hold the root still and let only
+     the named things animate (this is scoped to the filter — navigation
+     keeps global.css's cross-fade) */
+  :global(html.is-filtering::view-transition-old(root)),
+  :global(html.is-filtering::view-transition-new(root)) {
+    animation: none;
+  }
+
+  /* --- the birds --- */
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(clamp(104px, 13vw, 168px), 1fr));
+    gap: clamp(18px, 2.4vw, 38px);
+    margin: 1.6rem 0 0;
+    /* block only: the shorthand would take the gutter above with it, and the
+       grid would run to both window edges (the <ul>'s own indent is killed
+       by the padding-inline it inherits from that rule, not by this one) */
+    padding-block: 0;
+    list-style: none;
+  }
+
+  .cell {
+    margin: 0;
+  }
+  .cell[hidden] {
+    display: none;
+  }
+
+  /* --- the other eight --- */
+
+  .others {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em 1.4em;
+    margin-top: clamp(40px, 7vh, 88px);
+    padding-top: 1.2rem;
+    padding-bottom: 0.2rem;
+    border-top: 1px solid var(--rule-soft);
+    font-family: var(--sans);
+    font-size: var(--fs-tiny);
+  }
+  .others a {
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .others a:hover {
+    color: var(--ink);
+  }
+  .others__n {
+    font-size: var(--fs-micro);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-faint);
+  }
+</style>

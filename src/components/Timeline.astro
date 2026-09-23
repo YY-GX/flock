@@ -1,0 +1,1126 @@
+---
+import BirdPanel from './BirdPanel.astro';
+import { timelineBirds, usingFixture, locationsById } from '../lib/data';
+import { splitName } from '../lib/flock';
+import {
+  AXIS_Y, BAND_LABEL_Y, CURVE_TOP, DOT_R, DOT_Y, GRID_BOTTOM, H, HIT_R,
+  MONTH_LABEL_Y, PAD_X, RUN_TICK, SWARM_HALF, W, YEAR_LABEL_Y,
+  birdingDays, cumulativePoints, curveSampler, dayCaption, dayWhere, formatDate,
+  layoutRuns, monotonePath, monthTicks, seasonBands, swarm, travelRuns,
+  typeKey, typeLabel, x as xOf, TYPE_ORDER,
+} from '../lib/timeline';
+import { withBase } from '../lib/paths';
+
+const birds = timelineBirds;
+const dates = birds.map((b) => b.firstSpotted as string);
+
+/* --- the climb, 0 -> n --- */
+const curvePoints = cumulativePoints(dates);
+const curveD = monotonePath(curvePoints);
+const areaD = curveD
+  ? `${curveD} L ${W} ${AXIS_Y} L 0 ${AXIS_Y} Z`
+  : '';
+const curveEndY = curvePoints.length ? curvePoints[curvePoints.length - 1].y : AXIS_Y;
+
+const bands = seasonBands();
+const ticks = monthTicks();
+
+/* --- the swarm (TODO C2) ---
+   Every dot used to sit at x(date) with a hashed ±30 unit of vertical jitter,
+   which put 21 of them on the same 10-unit-wide spot on 19 Aug 2025. swarm()
+   dodges them onto a lattice whose pitch is wider than the hit ring instead;
+   the geometry, the cost function and the price in displacement are all
+   documented in src/lib/timeline.ts. */
+const placed = swarm(birds);
+const seatOf = new Map(placed.dots.map((d) => [d.id, d]));
+
+/* --- the days and the trips (TODO C6) ---
+   birdingDays() names a day only when the data proves the place; 14 of the 64
+   get no place line at all, and that is the point (DESIGN2 §0.1). The runs are
+   the brackets over the axis: the dense clusters this page has always had, now
+   labelled and clickable. */
+const placeOf = (id: string) => locationsById.get(id) ?? null;
+const days = birdingDays(birds, placeOf);
+const dayOf = new Map(days.map((d) => [d.iso, d]));
+/* iso -> { c: the cluster label, x: the day's TRUE x, n: birds } for the client */
+const dayIndex = Object.fromEntries(
+  days.map((d) => [d.iso, { c: dayCaption(d), x: +xOf(d.iso).toFixed(1), n: d.count }]),
+);
+const biggestDay = days.reduce((a, b) => (b.count > a.count ? b : a), days[0]);
+const biggestWhere = dayWhere(biggestDay);
+
+const runs = layoutRuns(
+  travelRuns(days, placeOf),
+  placed.days,
+  curveSampler(curvePoints),
+);
+
+/* --- one dot per bird, still in date order so the arrow keys walk time ---
+   data-bird is all the wiring the overlay needs: src/lib/panel.ts picks the
+   click up, looks the id up in the payload <BirdPanel /> embedded, and opens.
+   name/date/day ride along as attributes for the hover label. */
+const dots = birds.map((bird, i) => {
+  const name = splitName(bird.name).english;
+  const date = formatDate(bird.firstSpotted);
+  const seat = seatOf.get(bird.id);
+  const iso = (bird.firstSpotted as string).slice(0, 10);
+  const day = dayOf.get(iso);
+  /* "" on the 14 days the data cannot place — the label then says the count
+     and nothing else, rather than a place it cannot stand behind. */
+  const where = day ? dayWhere(day) : '';
+  return {
+    i,
+    id: bird.id,
+    name,
+    date,
+    iso,
+    cx: seat ? seat.x : xOf(iso),
+    cy: seat ? seat.y : DOT_Y,
+    tkey: typeKey(bird.type),
+    /* the screen-reader version of the cluster label: no live region needed,
+       the day rides along with the bird it belongs to */
+    label: day && day.count > 1
+      ? `${name}, ${date} — one of ${day.count} new birds that day` +
+        (where ? (day.placeIds.length ? `, at ${where}` : `, ${where}`) : '')
+      : `${name}, ${date}`,
+  };
+});
+
+const total = birds.length;
+const firstDate = total ? formatDate(dates[0]) : '';
+const lastDate = total ? formatDate(dates[total - 1]) : '';
+
+const counts = new Map<string, number>();
+for (const b of birds) counts.set(b.type, (counts.get(b.type) ?? 0) + 1);
+const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
+  name: typeLabel(t),
+  tkey: typeKey(t),
+  n: counts.get(t) as number,
+}));
+---
+
+<section class="tl">
+  <header class="tl__head">
+    <p class="eyebrow">Birding checklist</p>
+    <h1 class="display">When</h1>
+    <p class="lede tl__lede">
+      {total} species, {firstDate} to {lastDate}. The line climbs one step for every bird
+      seen for the first time; each dot is that first sighting.
+    </p>
+
+    {usingFixture && (
+      <p class="tl__fixture">
+        Sample data — <code>src/data/birds.json</code> has not been synced yet, so this is
+        the {total}-bird fixture from <code>birds.sample.json</code>.
+      </p>
+    )}
+  </header>
+
+  <p class="sr-only" id="tl-help">
+    Scrolls sideways. Tab once to reach the sightings, then use the left and right arrow
+    keys to move from one bird to the next, Home and End for the first and last, and
+    Enter to open one.
+  </p>
+
+  {/*
+    role="group", not a bare focusable <div> (TODO C8). This box is a tab stop
+    — it is how a keyboard scrolls the axis sideways — and a tab stop needs a
+    role that is allowed to carry a name. `generic` is not: ARIA forbids an
+    accessible name on it, and Chrome only exposes this one by accident.
+    `group` is the plain container role, so the label lands somewhere legal
+    without adding a landmark to a site whose skip links are deliberate.
+  */}
+  <div
+    class="tl__scroller"
+    id="scroller"
+    role="group"
+    tabindex="0"
+    aria-label="Timeline, scrolls horizontally"
+    aria-describedby="tl-help"
+  >
+    {/*
+      No role on the <svg> (TODO C8). It used to say role="img", which makes
+      the whole subtree presentational — and the subtree is 238 focusable
+      role="button" dots and 10 links. The two claims cannot both be true.
+      Chrome happened to expose the descendants anyway (measured: 238 buttons
+      in the AX tree under role="img"), so the keyboard path worked, but that
+      is a browser being forgiving, not the markup being right.
+
+      Dropping the role leaves the element as `graphics-document` (Chrome:
+      SvgRoot), a structural role that keeps its name and keeps its children.
+      role="group" measured identically; role="application" was rejected —
+      it hands every key to the page and this chart wants arrows, not all of
+      them. Everything that is only scaffolding — the season washes, the
+      gridlines, the month and year ticks, the three curve numbers — is
+      aria-hidden below, because without role="img" they would otherwise be
+      read out one fragment at a time. The data is the dots and the brackets,
+      and both carry full labels.
+    */}
+    <svg
+      id="axis"
+      class="tl__svg"
+      viewBox={`0 0 ${W} ${H}`}
+      width={W}
+      height={H}
+      style={`--tl-aspect: ${W / H}`}
+      aria-label={`Timeline of ${total} birds from ${firstDate} to ${lastDate}`}
+    >
+      <defs>
+        <linearGradient id="climb" x1="0" y1={CURVE_TOP} x2="0" y2={AXIS_Y} gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="var(--curve-fill-top)" />
+          <stop offset="1" stop-color="var(--curve-fill-bottom)" />
+        </linearGradient>
+      </defs>
+
+      {/* Eight washes, not eight rectangles — the edge between two seasons
+          is drawn freehand by the site's own pen, because 1 March at 00:00
+          is a convention and the birds never heard of it. The rule, and the
+          two things it is careful not to move, are over `seasonBands()` in
+          src/lib/timeline.ts. */}
+      <g class="bands" aria-hidden="true">
+        {bands.map((b) => (
+          <path d={b.d} fill={`var(--band-${b.season})`} />
+        ))}
+        {bands.map((b) => (
+          b.width > 120 && (
+            /* 26, not 14: the boundary this label stands next to can lean
+               10 units either way, and a label the wash has crept over
+               reads as a mistake */
+            <text class="band-label" x={b.x + 26} y={BAND_LABEL_Y}>{b.season}</text>
+          )
+        ))}
+      </g>
+
+      <g class="grid" aria-hidden="true">
+        {ticks.map((t) => (
+          <line x1={t.x} y1={AXIS_Y} x2={t.x} y2={GRID_BOTTOM} class={t.isJanuary ? 'grid__year' : 'grid__month'} />
+        ))}
+      </g>
+
+      <line class="ceiling" x1="0" y1={CURVE_TOP} x2={W} y2={CURVE_TOP} />
+
+      {areaD && <path class="climb-area" d={areaD} fill="url(#climb)" />}
+      {curveD && <path class="climb" d={curveD} />}
+
+      <text class="climb-label" x={W - PAD_X} y={curveEndY - 16} text-anchor="end" aria-hidden="true">{total}</text>
+      <text class="climb-ceiling" x={PAD_X - 10} y={CURVE_TOP + 5} text-anchor="end" aria-hidden="true">{total}</text>
+      <text class="climb-zero" x={PAD_X - 10} y={AXIS_Y - 10} text-anchor="end" aria-hidden="true">0</text>
+
+      <line class="axis" x1="0" y1={AXIS_Y} x2={W} y2={AXIS_Y} />
+
+      {/* Trip brackets — TODO C6, the thing the dense clusters were always
+          asking for. A dot is a bird, a cluster is a day, and a bracket is the
+          trip those days belong to: "COLORADO · 49". Hover or focus one to
+          raise its dots and read the card; click to pin it so the cluster
+          stays lit while you look at it. The ten runs and the rule that
+          picks them are in src/lib/timeline.ts.
+
+          The label sits above the axis, not in the 44-unit band DESIGN2 §1.4
+          assumed: the swarm's top row is at 252 and the axis at 230, so the
+          band is 22 units and only the hairline fits in it. */}
+      <g class="runs" id="runs" tabindex="-1" role="group" aria-label={`${runs.length} trips`}>
+        {runs.map((r, i) => (
+          /* The bracket opens the trip's first day, and the <a> *is* the
+             bracket (TODO C8). It used to be an <a tabindex="-1"> wrapped
+             round a <g role="link"> that carried the roving index, which put
+             a link inside a link: measured, that was 20 link nodes in the
+             accessibility tree for 10 brackets, each announced twice. An SVG
+             <a> is focusable and takes a tabindex like any other element, so
+             it can hold the roving index itself and the extra <g> goes away.
+             Enter is still handled in the script, for the pin. */
+          <a
+            class="run"
+            href={withBase(`/days/${r.key}`)}
+            data-run={r.key}
+            data-isos={r.isos.join(' ')}
+            data-region={r.region}
+            data-dates={r.dates}
+            data-detail={r.detail}
+            tabindex={i === 0 ? 0 : -1}
+            aria-label={`${r.region}: ${r.dates}, ${r.detail}`}
+          >
+            <rect class="run-hit" x={r.hx0} y={r.hy} width={r.hx1 - r.hx0} height={r.hh} />
+            <path
+              class="run-bracket"
+              d={`M ${r.x0.toFixed(1)} ${r.bracketY + RUN_TICK} V ${r.bracketY} H ${r.x1.toFixed(1)} V ${r.bracketY + RUN_TICK}`}
+            />
+            <text class="run-label" x={r.mid.toFixed(1)} y={r.labelY.toFixed(1)} text-anchor="middle">{r.label}</text>
+          </a>
+        ))}
+      </g>
+
+      {/* The hovered day's TRUE date, dropped from the axis through its
+          cluster. Most days have not moved and the stem lands in the middle of
+          the column; the handful that the swarm pushed sideways show it,
+          rather than hiding it. Moved and sized by the script. */}
+      <g class="day-mark" id="day-mark" aria-hidden="true">
+        <line class="day-mark__stem" x1="0" y1={AXIS_Y} x2="0" y2={DOT_Y + SWARM_HALF + 12} />
+        <circle class="day-mark__cap" cx="0" cy={AXIS_Y} r="3.2" />
+      </g>
+
+      {/* One tab stop for 238 dots: the first carries tabindex 0, the rest -1,
+          and the arrow keys move the roving index (see the script below). */}
+      <g class="dots" id="dots" tabindex="-1" role="group" aria-label={`${total} first sightings`}>
+        {dots.map((d) => (
+          <g
+            class="dot-g"
+            data-bird={d.id}
+            data-name={d.name}
+            data-date={d.date}
+            data-day={d.iso}
+            tabindex={d.i === 0 ? 0 : -1}
+            role="button"
+            aria-label={d.label}
+            style={`--c: var(--t-${d.tkey}); --d: ${Math.min(d.i * 7, 2400)}ms`}
+          >
+            <circle class="dot-hit" cx={d.cx} cy={d.cy} r={HIT_R} />
+            <circle class="dot" cx={d.cx} cy={d.cy} r={DOT_R} />
+          </g>
+        ))}
+      </g>
+
+      <g class="ticks" aria-hidden="true">
+        {ticks.map((t) => (
+          <text class="tick-month" x={t.mid} y={MONTH_LABEL_Y} text-anchor="middle">{t.label}</text>
+        ))}
+        {ticks.map((t, i) => (
+          (t.isJanuary || i === 0) && (
+            <text class="tick-year" x={t.x + 6} y={YEAR_LABEL_Y}>{t.year}</text>
+          )
+        ))}
+      </g>
+    </svg>
+  </div>
+
+  <footer class="tl__foot">
+    <ul class="tl__legend">
+      {legend.map((l) => (
+        <li style={`--dot: var(--t-${l.tkey})`}>
+          <span class="tl__swatch"></span>{l.name}<span class="tl__n">{l.n}</span>
+        </li>
+      ))}
+    </ul>
+    <div class="tl__foot-end">
+      <p class="meta tl__days">
+        {/* The chart's own count is the way into the ledger that lists them
+            one by one (DESIGN2 §1.4). */}
+        <a class="tl__dayslink" href={withBase("/days")}>{days.length} days out</a> — the biggest, {biggestDay.label}
+        {biggestWhere ? (biggestDay.placeIds.length ? ` at ${biggestWhere}` : ` ${biggestWhere}`) : ''}, brought {biggestDay.count}
+      </p>
+      <p class="meta tl__hint" aria-hidden="true">scroll sideways</p>
+    </div>
+  </footer>
+</section>
+
+{/* Resolves --compass-safe to a real px box the tip script can read. */}
+<span id="tl-safe" class="tl__safe" aria-hidden="true"></span>
+
+<div id="tip" class="tip" hidden>
+  <span class="tip__name" id="tip-name"></span>
+  <span class="tip__date" id="tip-date"></span>
+  {/* TODO C6: the cluster label. Hidden on the 19 days that hold one bird —
+      there is no cluster to name. */}
+  <span class="tip__day" id="tip-day" hidden></span>
+</div>
+
+<script type="application/json" id="tl-days" is:inline set:html={JSON.stringify(dayIndex)}></script>
+
+<BirdPanel birds={birds} />
+
+<style>
+  /* .eyebrow / .display / .lede / .meta come from global.css */
+  .tl {
+    padding: var(--page-top) 0 var(--page-bottom);
+    /* What the chart is NOT allowed to have: the page's top pad, the head
+       block, the gap under it, and the compass's corner. --tl-head is the
+       measured height of .tl__head (eyebrow + "When" + two lines of lede),
+       rounded up so the cap errs short rather than long.
+       Ending the box above var(--compass-safe) is what keeps the axis, the
+       month ticks and the year ticks out from under the compass (audit §2.6);
+       the token shrinks by itself on phones. */
+    --tl-head: 210px;
+    --tl-reserve: calc(
+      var(--page-top) + var(--head-gap) + var(--tl-head) + var(--compass-safe)
+    );
+  }
+
+  .tl__head {
+    max-width: 62ch;
+    padding: 0 var(--gutter);
+    margin-bottom: var(--head-gap);
+  }
+
+  /* The legend used to live in .tl__head, where it cost ~95px of the first
+     screen before a single dot was drawn (audit §2.2). It reads just as well
+     under the chart it explains. */
+  .tl__foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.8rem 2.5rem;
+    margin-top: 1.5rem;
+    /* This row sits at the bottom-left of the window on arrival, which is
+       where the compass lives, so it insets past it (audit §9.1). */
+    padding: 0 var(--gutter) 0 max(var(--gutter), var(--compass-safe));
+  }
+
+  /* The legend, then the day line and the scroll hint under it.
+
+     This block used to be right-aligned, on the assumption that it shared a
+     row with the legend. It never does: the legend is nine type names and
+     wraps to the full width at every viewport, so `space-between` had
+     nothing to separate and the end block landed on its own line — a 315px
+     ragged-left column starting at the compass inset with 960px of empty
+     paper to its right (AUDIT2 §4.2). Left-aligned under the legend, with
+     the sentence allowed its own width, it is one line at 1440 and reads
+     the same way at 360. */
+  .tl__foot-end {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  .tl__days { margin: 0; }
+
+  /* the site's link hairline, as on .day__up */
+  .tl__dayslink {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+  }
+  .tl__dayslink:hover { color: var(--ink); border-bottom-color: var(--ink-soft); }
+
+  .tl__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem 1.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-family: var(--sans);
+    font-size: var(--fs-tiny);
+    letter-spacing: 0.02em;
+    color: var(--ink-soft);
+  }
+  .tl__legend li { display: flex; align-items: center; gap: 0.5em; }
+  .tl__swatch {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--dot);
+  }
+  .tl__n { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+
+  .tl__fixture {
+    margin: 2rem 0 0;
+    font-family: var(--sans);
+    font-size: 0.76rem;
+    line-height: 1.6;
+    color: var(--ink-faint);
+  }
+  .tl__fixture code { font-size: 0.95em; }
+
+  .tl__scroller {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 var(--gutter);
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule) transparent;
+    overscroll-behavior-x: contain;
+  }
+  .tl__scroller::-webkit-scrollbar { height: 7px; }
+  .tl__scroller::-webkit-scrollbar-thumb {
+    background: var(--rule);
+    border-radius: 99px;
+  }
+  .tl__scroller:focus-visible { outline-offset: -2px; }
+
+  /* The chart may not be taller than the room left under the head, or the
+     first screen is a beige band with nothing in it (audit §2.2). */
+  .tl__svg {
+    --tl-h: max(260px, min(clamp(340px, 62vh, 600px), calc(100vh - var(--tl-reserve))));
+    display: block;
+    flex: 0 0 auto;
+    height: var(--tl-h);
+    width: calc(var(--tl-h) * var(--tl-aspect));
+    overflow: visible;
+  }
+
+  /* B1's paper grain sits under all of this now. Two things were re-checked
+     on the grained ground rather than on the flat token: the season names,
+     which were 0.75 opacity on --ink-faint (4.88:1) and went muddy over the
+     fibre, and the month rules, which are the faintest ink on the page. The
+     names come back to full --ink-faint, the rules keep their token but the
+     grid now runs the whole swarm, so there is more of each line to read. */
+  .band-label {
+    font-family: var(--sans);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    fill: var(--ink-faint);
+  }
+
+  /* text and bands never take the pointer: the dot under them must. */
+  .bands,
+  .ticks,
+  .grid { pointer-events: none; }
+
+  .grid__month { stroke: var(--rule-soft); stroke-width: 1; }
+  .grid__year { stroke: var(--rule); stroke-width: 1; }
+
+  .axis { stroke: var(--rule); stroke-width: 1; }
+  /* the "238" ceiling, so the climb has something to climb to */
+  .ceiling { stroke: var(--rule-soft); stroke-width: 1; }
+
+  .climb {
+    fill: none;
+    stroke: var(--curve);
+    stroke-width: 2.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .climb.is-drawing {
+    stroke-dasharray: var(--len);
+    stroke-dashoffset: var(--len);
+    animation: climb-draw 2000ms cubic-bezier(0.35, 0.1, 0.2, 1) 200ms forwards;
+  }
+  @keyframes climb-draw { to { stroke-dashoffset: 0; } }
+
+  .climb-area { animation: soft-in 1400ms ease 900ms backwards; }
+  .climb-label { animation: soft-in 900ms ease 1800ms backwards; }
+  /* The scale has to be readable on arrival — it used to wait 1.8s behind the
+     draw-in, which is the whole of audit §2.5. */
+  .ceiling,
+  .climb-ceiling,
+  .climb-zero { animation: soft-in 700ms ease 120ms backwards; }
+  @keyframes soft-in { from { opacity: 0; } }
+
+  .climb-label {
+    font-family: var(--serif);
+    font-size: 26px;
+    fill: var(--curve);
+  }
+  .climb-ceiling,
+  .climb-zero {
+    font-family: var(--serif);
+    font-size: 14px;
+    fill: var(--ink-faint);
+  }
+
+  .tick-month {
+    font-family: var(--sans);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    fill: var(--ink-faint);
+  }
+  .tick-year {
+    font-family: var(--sans);
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    fill: var(--ink-soft);
+  }
+
+  /* The target you actually hit. r is set from HIT_R as an attribute so it
+     still works where the CSS geometry properties do not; the rule below only
+     has to grow it where the box is drawn smaller. */
+  .dot-hit { fill: transparent; pointer-events: all; }
+
+  .dot {
+    fill: var(--c);
+    stroke: var(--paper);
+    stroke-width: 0;
+    animation: soft-in 520ms ease var(--d, 0ms) backwards;
+    transform-box: fill-box;
+    transform-origin: center;
+    transition: transform 200ms cubic-bezier(0.2, 0.75, 0.3, 1), stroke-width 200ms ease;
+  }
+
+  .dot-g { cursor: pointer; outline: none; }
+  .dot-g:hover .dot,
+  .dot-g:focus-visible .dot,
+  .dot-g.is-active .dot {
+    transform: scale(2.1);
+    stroke-width: 0.9;
+  }
+  .dot-g:focus-visible .dot { stroke: var(--ink); stroke-width: 1.2; }
+
+  /* TODO C6. Touching one dot raises the whole day it belongs to: the rest of
+     that day's cluster stays at full strength and grows a little, every other
+     day drops back. That is what turns "a smudge of dots" into "the 21 birds
+     of 19 August". The old rule dimmed everything except the one dot under the
+     pointer, which hid exactly the relationship worth showing. */
+  .dots.has-day .dot-g:not(.is-kin) .dot { opacity: 0.28; }
+  .dots.has-day .dot-g.is-kin .dot { transform: scale(1.35); }
+  .dots.has-day .dot-g.is-kin:hover .dot,
+  .dots.has-day .dot-g.is-kin:focus-visible .dot { transform: scale(2.1); }
+  .dot { transition-property: transform, stroke-width, opacity; }
+
+  /* TODO C6 — the trip brackets. They are chart furniture, so at rest they
+     speak with the axis's own two voices (--rule, --ink-faint 4.88:1 on the
+     grained paper); hover, focus or pin steps them up to --ink-soft/--ink in
+     160ms, the same beat as the dots. */
+  .run-hit { fill: transparent; pointer-events: all; }
+  .run-bracket {
+    fill: none;
+    stroke: var(--rule);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    transition: stroke 160ms ease;
+  }
+  .run-label {
+    font-family: var(--sans);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    /* --ink-soft, not --ink-faint: the same ink reads 4.88:1 on bare paper,
+       but a bracket label stands on a season band, and the tint under it
+       took "NC ZOO · 6" down to 4.29:1 (AUDIT2 §3.4). These are real links;
+       the month ticks and season words beside them are scaffolding and
+       keep the fainter ink. */
+    fill: var(--ink-soft);
+    transition: fill 160ms ease;
+  }
+  .run { cursor: pointer; outline: none; }
+  .run:hover .run-bracket,
+  .run:focus-visible .run-bracket,
+  .run.is-pinned .run-bracket { stroke: var(--ink-soft); }
+  .run:hover .run-label,
+  .run:focus-visible .run-label,
+  .run.is-pinned .run-label { fill: var(--ink); }
+  .run:focus-visible .run-bracket { stroke: var(--ink); stroke-width: 1.8; }
+  /* in with the scale, not behind the 2s draw-in (audit §2.5) */
+  .runs { animation: soft-in 700ms ease 320ms backwards; }
+
+  /* the hovered day's true date */
+  .day-mark {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease;
+  }
+  .day-mark.is-on { opacity: 1; }
+  .day-mark__stem {
+    stroke: var(--rule);
+    stroke-width: 1;
+    stroke-dasharray: 3 4;
+  }
+  .day-mark__cap { fill: var(--ink-faint); }
+
+  .tl__hint { margin: 0; }
+
+  /* A hidden box the size of the compass's corner, so the tip script can read
+     --compass-safe as a resolved length instead of guessing a number. */
+  .tl__safe {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: var(--compass-safe);
+    height: var(--compass-safe);
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  /* hover label */
+  .tip {
+    position: fixed;
+    z-index: 40;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.42rem 0.7rem;
+    background: var(--paper);
+    box-shadow: var(--lift-sm);
+    border-radius: 2px;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 140ms ease, transform 140ms ease;
+    white-space: nowrap;
+  }
+  .tip.is-on { opacity: 1; transform: none; }
+  .tip[hidden] { display: none; }
+  .tip__name { font-size: 0.92rem; line-height: 1.2; }
+  .tip__date {
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+  }
+  .tip__day {
+    margin-top: 0.3rem;
+    padding-top: 0.3rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+  }
+  .tip__day[hidden] { display: none; }
+
+  @media (max-width: 760px) {
+    .tl { --tl-head: 205px; }
+    .tl__svg {
+      --tl-h: max(240px, min(clamp(300px, 58vh, 520px), calc(100vh - var(--tl-reserve))));
+    }
+    /* the box is drawn smaller here, so the target has to be bigger in
+       viewBox units to stay at 24px on glass */
+    .dot-hit { r: 21px; }
+    /* DESIGN2 §1.4: below 760 the brackets stay — they scale with the svg —
+       but the words go, because 12px of letterspaced sans is wider than most
+       of the trips it names. The card still names them on touch. */
+    .run-label { display: none; }
+    .tl__legend { gap: 0.4rem 1.1rem; font-size: 0.7rem; }
+    .tl__foot { gap: 0.8rem 1.2rem; }
+    .tl__foot-end { align-items: flex-start; text-align: left; }
+  }
+</style>
+
+<script>
+  /*
+   * Timeline behaviour only: the climb drawing itself in, the hover label, and
+   * turning a vertical wheel into sideways travel.
+   *
+   * Opening a bird is NOT here any more — the dots carry data-bird and
+   * src/lib/panel.ts does the rest (fill, focus trap, Esc, scroll restore).
+   */
+  import { isPanelOpen } from '../lib/panel';
+
+  const el = <T extends Element>(id: string) => document.getElementById(id) as T | null;
+
+  function setup() {
+    const scroller = el<HTMLDivElement>('scroller');
+    const dots = el<SVGGElement>('dots');
+    const tip = el<HTMLDivElement>('tip');
+    const tipName = el<HTMLElement>('tip-name');
+    const tipDate = el<HTMLElement>('tip-date');
+    const tipDay = el<HTMLElement>('tip-day');
+    if (!scroller || !dots || !tip || !tipName || !tipDate || !tipDay) return;
+
+    // re-entrant safety: astro:page-load fires on every client-side navigation
+    if (dots.dataset.wired === '1') return;
+    dots.dataset.wired = '1';
+
+    /* ---------------- the climb draws itself in ---------------- */
+
+    const climb = document.querySelector<SVGPathElement>('path.climb');
+    if (climb && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const len = climb.getTotalLength();
+      climb.style.setProperty('--len', String(Math.ceil(len)));
+      climb.classList.add('is-drawing');
+    }
+
+    /* ---------------- open on data, not on the empty end ----------------
+       The domain starts Sep 2024 and the first five months hold one bird, so
+       a narrow window opened on an empty plot (audit §2.2). Slide the start
+       just far enough that the first screen holds birds; a laptop-width
+       window already does, and keeps the origin and its "0". */
+
+    const svg = scroller.querySelector('svg');
+    if (svg && scroller.scrollLeft === 0) {
+      const box = svg.getBoundingClientRect();
+      const units = svg.viewBox.baseVal.width / (box.width || 1);
+      const win = scroller.clientWidth * units;
+      const xs = Array.from(dots.querySelectorAll<SVGCircleElement>('.dot'))
+        .map((c) => c.cx.baseVal.value)
+        .sort((a, b) => a - b);
+      const want = Math.min(18, xs.length);
+      if (want && xs[want - 1] > win * 0.9) {
+        /* The leftmost window that holds `want` dots — searched against the
+           0.86 of the window the scroll below actually leaves for them. The
+           last 0.14 is bled in on the left, so a window sized `win` here put
+           the right-hand dots (and, because the dots come in day-clusters,
+           a whole day of them) back off the right edge: five dots on the
+           first screen at 900x900 instead of 54 (AUDIT2 §4.1). */
+        const reach = win * (1 - 0.14);
+        let start = xs[0];
+        for (let i = 0; i + want - 1 < xs.length; i++) {
+          if (xs[i + want - 1] - xs[i] <= reach) { start = xs[i]; break; }
+        }
+        scroller.scrollLeft = Math.max(0, start / units - scroller.clientWidth * 0.14);
+      }
+    }
+
+    /* ---------------- the day a dot belongs to (TODO C6) ----------------
+       238 first sightings fall on 64 days, and the dense places on the axis
+       are trips. Touching any dot names its day — "19 Aug 2025 · Denver, CO ·
+       21 new birds" — lights the rest of that day's cluster, and drops a stem
+       from the axis at the day's true date, which is also the honest way to
+       show the small sideways displacement the swarm had to spend to make the
+       big piles clickable.
+
+       Seam for DESIGN §4 I1: `dayIndex` below is the same shape a
+       /days/<iso> route would need; birdingDays() in src/lib/timeline.ts is
+       the whole data layer, ready to move to src/lib/days.ts. Nothing here
+       would have to change except making the caption a link. */
+
+    type DayRec = { c: string; x: number; n: number };
+    let dayData: Record<string, DayRec> = {};
+    try {
+      dayData = JSON.parse(el<HTMLScriptElement>('tl-days')?.textContent || '{}');
+    } catch { dayData = {}; }
+
+    const mark = el<SVGGElement>('day-mark');
+    const markStem = mark?.querySelector<SVGLineElement>('.day-mark__stem') ?? null;
+    const markCap = mark?.querySelector<SVGCircleElement>('.day-mark__cap') ?? null;
+
+    const kin = new Map<string, SVGGElement[]>();
+    let activeDay: string | null = null;
+    let kinEls: SVGGElement[] = [];
+
+    function setDay(iso: string | null) {
+      if (iso === activeDay) return;
+      for (const g of kinEls) g.classList.remove('is-kin');
+      activeDay = iso;
+      kinEls = iso ? kin.get(iso) ?? [] : [];
+      if (!iso || !kinEls.length) {
+        dots!.classList.remove('has-day');
+        mark?.classList.remove('is-on');
+        kinEls = [];
+        return;
+      }
+      for (const g of kinEls) g.classList.add('is-kin');
+      dots!.classList.add('has-day');
+
+      const rec = dayData[iso];
+      if (rec && rec.n > 1 && markStem && markCap && mark) {
+        let low = 0;
+        for (const g of kinEls) {
+          const c = g.querySelector('circle.dot');
+          const cy = c ? Number(c.getAttribute('cy')) : 0;
+          if (cy > low) low = cy;
+        }
+        markStem.setAttribute('x1', String(rec.x));
+        markStem.setAttribute('x2', String(rec.x));
+        markStem.setAttribute('y2', String(low + 14));
+        markCap.setAttribute('cx', String(rec.x));
+        mark.classList.add('is-on');
+      } else {
+        mark?.classList.remove('is-on');
+      }
+    }
+
+    /* ---------------- hover label ---------------- */
+
+    /* SVGGraphicsElement, not SVGGElement: a dot is a <g> and a trip bracket
+       is now an <a> (TODO C8). Both are SVGGraphicsElements and the label
+       only ever asks either of them for a bounding box and a dataset. */
+    let hovered: SVGGraphicsElement | null = null;
+
+    /* The compass owns the bottom-left corner. #tl-safe is a hidden box of
+       exactly var(--compass-safe), so this reads the real token (which shrinks
+       on phones) instead of a hardcoded 146. */
+    const safeEl = el<HTMLElement>('tl-safe');
+    const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+
+    function placeTip(group: SVGGraphicsElement) {
+      const r = group.getBoundingClientRect();
+      const t = tip!.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      let top = r.top - t.height - 12;
+      if (top < 8) top = r.bottom + 12;
+      let left = r.left + r.width / 2 - t.width / 2;
+
+      left = clamp(left, 8, Math.max(8, vw - t.width - 8));
+      top = clamp(top, 8, Math.max(8, vh - t.height - 8));
+
+      const safe = safeEl ? safeEl.getBoundingClientRect() : null;
+      if (safe && left < safe.width + 8 && top + t.height > vh - safe.height) {
+        // step right out of the corner if there is room, otherwise step above it
+        if (safe.width + 8 + t.width <= vw - 8) left = safe.width + 8;
+        else top = Math.max(8, vh - safe.height - t.height - 8);
+      }
+
+      tip!.style.left = `${Math.round(left)}px`;
+      tip!.style.top = `${Math.round(top)}px`;
+    }
+
+    function showTip(group: SVGGElement) {
+      const name = group.dataset.name;
+      if (!name) return;
+      hovered = group;
+      const iso = group.dataset.day ?? null;
+      setDay(iso);
+      tipName!.textContent = name;
+      tipDate!.textContent = group.dataset.date ?? '';
+      const rec = iso ? dayData[iso] : null;
+      if (rec && rec.n > 1) {
+        tipDay!.textContent = rec.c;
+        tipDay!.hidden = false;
+      } else {
+        tipDay!.textContent = '';
+        tipDay!.hidden = true;
+      }
+      tip!.hidden = false;
+      placeTip(group);
+      requestAnimationFrame(() => tip!.classList.add('is-on'));
+    }
+
+    function hideTip() {
+      hovered = null;
+      /* a pinned trip outlives a passing hover — fall back to it, don't go
+         dark (TODO C6) */
+      if (pinned) { showRun(pinned); return; }
+      setDay(null);
+      tip!.classList.remove('is-on');
+      tip!.hidden = true;
+    }
+
+    const groupOf = (target: EventTarget | null) =>
+      (target instanceof Element ? target.closest('g.dot-g') : null) as SVGGElement | null;
+
+    /* ---------------- one tab stop, arrows along the row ----------------
+       238 dots used to be 238 tab stops (audit §2.3). The markup ships the
+       first dot at tabindex 0 and the rest at -1, so this is already true
+       without JavaScript; the roving index below is what makes it usable. */
+
+    const list = Array.from(dots.querySelectorAll<SVGGElement>('g.dot-g'));
+    for (const g of list) {
+      const iso = g.dataset.day;
+      if (!iso) continue;
+      const bucket = kin.get(iso);
+      if (bucket) bucket.push(g);
+      else kin.set(iso, [g]);
+    }
+    let active = 0;
+
+    function ensureVisible(g: SVGGElement) {
+      const r = g.getBoundingClientRect();
+      const s = scroller!.getBoundingClientRect();
+      const pad = 48;
+      if (r.left < s.left + pad) scroller!.scrollLeft -= s.left + pad - r.left;
+      else if (r.right > s.right - pad) scroller!.scrollLeft += r.right - (s.right - pad);
+    }
+
+    function setActive(i: number, focus: boolean) {
+      const next = Math.min(Math.max(i, 0), list.length - 1);
+      if (!list[next]) return;
+      list[active]?.setAttribute('tabindex', '-1');
+      active = next;
+      list[active].setAttribute('tabindex', '0');
+      if (focus) {
+        list[active].focus({ preventScroll: true });
+        ensureVisible(list[active]);
+      }
+    }
+
+    dots.addEventListener('keydown', (e) => {
+      const ev = e as KeyboardEvent;
+      if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      const g = groupOf(ev.target);
+      if (!g) return;
+      const i = list.indexOf(g);
+      if (i < 0) return;
+      let next: number;
+      switch (ev.key) {
+        case 'ArrowRight':
+        case 'ArrowDown': next = i + 1; break;
+        case 'ArrowLeft':
+        case 'ArrowUp': next = i - 1; break;
+        case 'PageDown': next = i + 10; break;
+        case 'PageUp': next = i - 10; break;
+        case 'Home': next = 0; break;
+        case 'End': next = list.length - 1; break;
+        default: return; // Enter and Space belong to panel.ts
+      }
+      ev.preventDefault();
+      setActive(next, true);
+    });
+
+    dots.addEventListener('pointerover', (e) => {
+      if ((e as PointerEvent).pointerType === 'touch') return;
+      const g = groupOf(e.target);
+      if (g && g !== hovered) showTip(g);
+    });
+    dots.addEventListener('pointerout', (e) => {
+      const g = groupOf(e.target);
+      const to = groupOf((e as PointerEvent).relatedTarget);
+      if (g && to !== g) hideTip();
+    });
+    dots.addEventListener('focusin', (e) => {
+      const g = groupOf(e.target);
+      if (!g) return;
+      const i = list.indexOf(g);
+      if (i >= 0) setActive(i, false);
+      showTip(g);
+    });
+    dots.addEventListener('focusout', hideTip);
+    scroller.addEventListener(
+      'scroll',
+      () => {
+        // arrowing along the row scrolls the axis; the label should follow the
+        // focused dot rather than blink out from under the keyboard
+        if (hovered && hovered === document.activeElement) placeTip(hovered);
+        else hideTip();
+      },
+      { passive: true },
+    );
+
+    /* ---------------- trip brackets (TODO C6) ----------------
+       A dot is a bird, a cluster is a day, a bracket is the trip. Hover or
+       focus one and its days come up out of the swarm while the card names it
+       ("Colorado — 19–22 Aug 2025 — 4 days · 49 new birds · Denver, CO and
+       …"). Click pins it, so the cluster stays lit while you read across it;
+       click again, press Esc, or open a bird to let go.
+
+       /days/<iso> (DESIGN2 §1) now exists, so the bracket is wrapped in an
+       SVG <a> to the trip's first day and clicking it goes there — this is
+       the entry point C6 was always asking for. The pin below is what the
+       click used to do on its own and is now what the hover leaves behind
+       for the instant before the page turns; Esc still lets it go.
+
+       Nine brackets, one tab stop: the same roving index the 238 dots use. */
+
+    const runsG = el<SVGGElement>('runs');
+    const runEls = Array.from(document.querySelectorAll<SVGGraphicsElement>('#runs .run'));
+    let pinned: SVGGraphicsElement | null = null;
+    let runActive = 0;
+
+    /** light every dot of these days at once (setDay only does one day) */
+    function lightDays(isos: string[]) {
+      for (const g of kinEls) g.classList.remove('is-kin');
+      activeDay = null;
+      kinEls = [];
+      for (const iso of isos) for (const g of kin.get(iso) ?? []) kinEls.push(g);
+      mark?.classList.remove('is-on');
+      if (!kinEls.length) { dots!.classList.remove('has-day'); return; }
+      for (const g of kinEls) g.classList.add('is-kin');
+      dots!.classList.add('has-day');
+    }
+
+    function showRun(g: SVGGraphicsElement) {
+      hovered = g;
+      lightDays((g.dataset.isos ?? '').split(' ').filter(Boolean));
+      tipName!.textContent = g.dataset.region ?? '';
+      tipDate!.textContent = g.dataset.dates ?? '';
+      tipDay!.textContent = g.dataset.detail ?? '';
+      tipDay!.hidden = !g.dataset.detail;
+      tip!.hidden = false;
+      placeTip(g);
+      requestAnimationFrame(() => tip!.classList.add('is-on'));
+    }
+
+    function clearRun() {
+      if (pinned) { showRun(pinned); return; }
+      hovered = null;
+      lightDays([]);
+      tip!.classList.remove('is-on');
+      tip!.hidden = true;
+    }
+
+    function unpin() {
+      if (!pinned) return;
+      pinned.classList.remove('is-pinned');
+      pinned = null;
+      clearRun();
+    }
+
+    function setRunActive(i: number, focus: boolean) {
+      const next = Math.min(Math.max(i, 0), runEls.length - 1);
+      if (!runEls[next]) return;
+      runEls[runActive]?.setAttribute('tabindex', '-1');
+      runActive = next;
+      runEls[runActive].setAttribute('tabindex', '0');
+      if (focus) {
+        runEls[runActive].focus({ preventScroll: true });
+        ensureVisible(runEls[runActive]);
+      }
+    }
+
+    const runOf = (target: EventTarget | null) =>
+      (target instanceof Element ? target.closest('.run') : null) as SVGGraphicsElement | null;
+
+    if (runsG) {
+      runsG.addEventListener('pointerover', (e) => {
+        if ((e as PointerEvent).pointerType === 'touch') return;
+        const g = runOf(e.target);
+        if (g && g !== hovered) showRun(g);
+      });
+      runsG.addEventListener('pointerout', (e) => {
+        const g = runOf(e.target);
+        const to = runOf((e as PointerEvent).relatedTarget);
+        if (g && to !== g) clearRun();
+      });
+      runsG.addEventListener('focusin', (e) => {
+        const g = runOf(e.target);
+        if (!g) return;
+        const i = runEls.indexOf(g);
+        if (i >= 0) setRunActive(i, false);
+        showRun(g);
+      });
+      runsG.addEventListener('focusout', clearRun);
+      runsG.addEventListener('click', (e) => {
+        const g = runOf(e.target);
+        if (!g) return;
+        if (pinned === g) { unpin(); return; }
+        pinned?.classList.remove('is-pinned');
+        pinned = g;
+        g.classList.add('is-pinned');
+        showRun(g);
+      });
+      runsG.addEventListener('keydown', (e) => {
+        const ev = e as KeyboardEvent;
+        if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        const g = runOf(ev.target);
+        if (!g) return;
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          g.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+          return;
+        }
+        const i = runEls.indexOf(g);
+        let next: number;
+        switch (ev.key) {
+          case 'ArrowRight':
+          case 'ArrowDown': next = i + 1; break;
+          case 'ArrowLeft':
+          case 'ArrowUp': next = i - 1; break;
+          case 'Home': next = 0; break;
+          case 'End': next = runEls.length - 1; break;
+          default: return;
+        }
+        ev.preventDefault();
+        setRunActive(next, true);
+      });
+      /* Esc lets a pinned trip go. Capture phase and preventDefault, because
+         Compass.astro reads Esc as "leave this view" and checks
+         defaultPrevented: the most local state has to unwind first, exactly
+         as the bird panel does. */
+      document.addEventListener('keydown', (e) => {
+        const ev = e as KeyboardEvent;
+        if (ev.key !== 'Escape' || !pinned || isPanelOpen()) return;
+        ev.preventDefault();
+        unpin();
+      }, true);
+    }
+
+    // the label must not hang around behind the overlay
+    document.addEventListener('bird:open', hideTip);
+    document.addEventListener('bird:open', unpin);
+
+    /* ---- vertical wheel scrolls the axis sideways (the page barely scrolls) ---- */
+    scroller.addEventListener(
+      'wheel',
+      (e) => {
+        const ev = e as WheelEvent;
+        if (isPanelOpen() || ev.shiftKey || ev.ctrlKey) return;
+        if (Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) return;
+        // the page comes first: only take the wheel once there is no page left
+        // to scroll in that direction
+        const doc = document.documentElement;
+        const room = doc.scrollHeight - window.innerHeight;
+        const y = window.scrollY;
+        if (room > 8 && ((ev.deltaY > 0 && y < room - 8) || (ev.deltaY < 0 && y > 8))) return;
+        const before = scroller.scrollLeft;
+        scroller.scrollLeft = before + ev.deltaY;
+        if (scroller.scrollLeft !== before) ev.preventDefault();
+      },
+      { passive: false },
+    );
+  }
+
+  setup();
+  document.addEventListener('astro:page-load', setup);
+</script>

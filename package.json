@@ -1,0 +1,23 @@
+{
+  "name": "bird-web",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "focal": "node scripts/focal-points.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "og": "node scripts/og-cards-guard.mjs --strict",
+    "photos:web": "node scripts/photos-web.mjs",
+    "photos:stage": "node scripts/photos-stage.mjs",
+    "verify": "node scripts/verify-build.mjs",
+    "prebuild": "node scripts/photos-stage.mjs && node scripts/og-cards-guard.mjs"
+  },
+  "dependencies": {
+    "astro": "^5.0.0"
+  }
+}

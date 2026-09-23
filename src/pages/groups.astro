@@ -1,0 +1,566 @@
+---
+/**
+ * Groups — the flock clumps together.
+ *
+ * Nine bubbles, one per Type, each one an organic clump built from that
+ * group's own photographs and sized so its *area* is proportional to the
+ * number of birds in it. The contrast is the whole point: perching birds is
+ * an enormous mass of 109, specialists is literally three photographs.
+ * Nothing here normalises that away.
+ *
+ * The arrangement is packed twice at build time — once for a landscape
+ * stage, once for a phone — and written into each bubble as percentages, so
+ * the view is correct before a byte of JavaScript arrives and correct
+ * forever if none does. The script below re-packs for the real box, plays
+ * the settle, and then keeps the bubbles gently jostling.
+ *
+ * Clicking a bubble blows it up to fill the screen and shoves the other
+ * eight off the edges, then lands on /groups/<slug>, which is a real page.
+ */
+import Base from '../layouts/Base.astro';
+import BubbleCluster from '../components/BubbleCluster.astro';
+import { birds, photosById } from '../lib/data';
+import {
+  CAP,
+  FILL_TALL,
+  FILL_WIDE,
+  buildGroups,
+  bubbleSize,
+  clusterDiscs,
+  packGroups,
+  representatives,
+} from '../lib/groupsView';
+
+/* A bubble is made of photographs, so a bird without one cannot be in it. */
+const hasPhoto = (bird: { photoIds?: string[] }) =>
+  (bird.photoIds ?? []).some((id) => (photosById.get(id)?.files?.length ?? 0) > 0);
+
+const spotted = birds.filter((b) => b.spotted);
+const groups = buildGroups(spotted, hasPhoto);
+const counts = groups.map((g) => g.count);
+const total = counts.reduce((a, b) => a + b, 0);
+
+/* Nominal stages. The real one is measured in the browser; these only have
+   to have the right aspect ratio, because everything below is a percentage.
+   WIDE is the shape a laptop actually gives the stage: the full width
+   between the gutters, and whatever is left of the first screen once the
+   head above and the compass's corner below are paid for. Packing it any
+   taller than that is what used to leave two bubbles under the fold. */
+const WIDE = { w: 1000, h: 355 };
+const TALL = { w: 380, h: 620 };
+
+const wide = packGroups(counts, WIDE.w, WIDE.h);
+const tall = packGroups(counts, TALL.w, TALL.h);
+
+const pct = (v: number, of: number) => `${((v / of) * 100).toFixed(3)}%`;
+
+/* A bubble wide enough to carry its own name in the middle. Below this the
+   name goes underneath, where there is room for it. */
+const INSIDE_AT = 0.36; // as a share of the biggest radius, i.e. √(n / nMax)
+/* A phone's stage is a column and its bubbles are about half as wide, so
+   the bar for carrying a plate across the middle is higher there: at 360px
+   "Wading & Shorebirds" would be a four-line plate over a 101px bubble. */
+const ROOMY_AT = 0.6;
+const biggestCount = Math.max(...counts);
+
+const bubbles = groups.map((group, i) => {
+  const k = bubbleSize(group.withPhoto.length, group.count);
+  const discs = clusterDiscs(k);
+  /* Roughly how wide one photograph lands on a laptop, so the image is
+     built at a sensible resolution instead of 2x the biggest guess. */
+  const thumb = Math.round(
+    Math.min(120, Math.max(40, ((discs[0]?.d ?? 40) / 100) * wide[i].r * 2)),
+  );
+  return {
+    group,
+    discs,
+    inside: Math.sqrt(group.count / biggestCount) >= INSIDE_AT,
+    roomy: Math.sqrt(group.count / biggestCount) >= ROOMY_AT,
+    reps: representatives(group, k),
+    thumb,
+    style: [
+      `--xw:${pct(wide[i].x, WIDE.w)}`,
+      `--yw:${pct(wide[i].y, WIDE.h)}`,
+      `--dw:${pct(wide[i].r * 2, WIDE.w)}`,
+      `--xt:${pct(tall[i].x, TALL.w)}`,
+      `--yt:${pct(tall[i].y, TALL.h)}`,
+      `--dt:${pct(tall[i].r * 2, TALL.w)}`,
+    ].join(';'),
+  };
+});
+
+const biggest = groups[0];
+const smallest = groups[groups.length - 1];
+---
+
+<Base
+  title="Groups · Birding Checklist"
+  description={`${groups.length} groups, ${total} birds — from ${biggest.count} perching birds down to ${smallest.count} specialists.`}
+>
+  <section class="page">
+    <header class="page__head">
+      <p class="eyebrow">Birding checklist</p>
+      <h1 class="display">Groups</h1>
+      <p class="lede">
+        {groups.length} groups, {total} birds. Every bubble is a clump of its own birds'
+        photographs, sized by how many it holds — {biggest.count}
+        {biggest.label.toLowerCase()} against {smallest.count}
+        {smallest.label.toLowerCase()}.
+      </p>
+    </header>
+
+    <div class="stage-wrap">
+      <div class="gstage" data-bubbles>
+        {bubbles.map((b) => <BubbleCluster {...b} />)}
+      </div>
+    </div>
+
+    {/*
+      The stage, and the bubbles in it, decided before the first paint.
+
+      Two lines of work: fitStage()'s six, and the one line of radiiFor()
+      that says how big a bubble is. Both have twins — in the module script
+      below, and in src/lib/groupsView.ts — and the twins have to agree.
+
+      Why it cannot wait for the module script: that runs after the first
+      paint, so the page was laid out twice and the reader watched the
+      second one arrive (CLS 0.0686 at 1440x700, AUDIT2 §2.2). Two things
+      were moving.
+
+      The box. The stylesheet caps the stage's width at the WIDE pack's own
+      proportion and the script lifts the cap to the full gutter-to-gutter
+      width; the two agree only at one window height, so at 1440x700 the
+      stage was painted 732px wide and re-laid at 1252px. Lifting it here
+      costs nothing and is invisible: nothing has been painted yet. A
+      reader with no JavaScript keeps the capped box, which is the one that
+      fits all nine bubbles on a short screen without measuring anything.
+
+      The bubbles. The server packs for a 1000x355 stage and writes each
+      diameter as a percentage of the stage width; radiiFor() re-packs for
+      the real box, and the two agree only when the real box is that same
+      proportion — so on every other window all nine bubbles breathed once
+      on load. Width is the only layout property the simulation sets
+      (position is a transform, and transforms are not layout shift), so
+      setting it from the same rule closes it: R is radiiFor()'s own line,
+      the constants are imported from that module rather than copied, and
+      the centres already agree because seed() reads the same --xw/--yw the
+      stylesheet is using. layout() then measures the same box and writes
+      the same widths back.
+
+      Measured on the dev server, both themes: 1440x700 0.0713 -> 0.0000,
+      1440x900 0.0088 -> 0.0000, 1280x800 0.0202 -> 0.0005, 900x900 0.0334
+      -> 0.0018, 768x1024 0.0237 -> 0.0098, phones 0.0000 throughout. What
+      is left is the settle's own first frame, which is a transform.
+
+      Under prefers-reduced-motion there is no settle: layout() jumps
+      straight to the packed positions, so that first frame still moves the
+      bubbles (0.08-0.10, against 0.08-0.11 before this pass — their sizes
+      are fixed here, their positions are not). Placing them here too would
+      mean running all 500 relax steps before the first paint.
+    */}
+    <script is:inline define:vars={{ FILL_WIDE, FILL_TALL, CAP }}>
+      (function () {
+        var stage = document.querySelector('[data-bubbles]');
+        if (!stage || window.matchMedia('(max-width: 720px)').matches) return;
+        var wrap = stage.parentElement;
+        var page = stage.closest('.page');
+        if (!wrap || !page) return;
+
+        /* fitStage() */
+        var top = stage.getBoundingClientRect().top + window.scrollY;
+        var below =
+          parseFloat(getComputedStyle(wrap).paddingBottom) +
+          parseFloat(getComputedStyle(page).paddingBottom);
+        var want = Math.max(260, Math.min(640, window.innerHeight - top - below));
+        stage.style.maxWidth = 'none';
+        stage.style.minHeight = '0';
+        stage.style.height = Math.round(want) + 'px';
+
+        /* radiiFor() */
+        var els = stage.querySelectorAll('a[data-slug]');
+        var w = stage.getBoundingClientRect().width;
+        var h = want;
+        if (!els.length || !w) return;
+        var counts = [];
+        var total = 0;
+        var max = 1;
+        for (var i = 0; i < els.length; i++) {
+          var n = Number(els[i].dataset.count) || 1;
+          counts.push(n);
+          total += n;
+          if (n > max) max = n;
+        }
+        var fill = w < h ? FILL_TALL : FILL_WIDE;
+        var R = Math.min(
+          Math.sqrt((fill * w * h * max) / (Math.PI * total)),
+          CAP * Math.min(w, h),
+        );
+        for (var j = 0; j < els.length; j++) {
+          els[j].style.width = (2 * R * Math.sqrt(counts[j] / max)).toFixed(2) + 'px';
+        }
+      })();
+    </script>
+  </section>
+</Base>
+
+<script>
+  /*
+   * The simulation. Nine circles, three forces, no library.
+   *
+   *   1. layout   pack the real box (radius ∝ √count, so area ∝ count),
+   *               seeded from where the server already put each bubble so
+   *               nothing jumps on load;
+   *   2. settle   a visible shove into place, alpha decaying to nothing;
+   *   3. idle     slow per-bubble drift on a spring back to the settled
+   *               spot, plus the same collision pass, at 30fps.
+   *
+   * It idles at nine nodes and thirty-six distance checks a step, and stops
+   * dead when the tab is hidden or the page is left.
+   */
+  import { navigate } from 'astro:transitions/client';
+  import { avoid, idleStep, radiiFor, relaxStep, settle } from '../lib/groupsView';
+  import type { KeepOut, PackNode, XY } from '../lib/groupsView';
+
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const phone = () => matchMedia('(max-width: 720px)').matches;
+
+  let teardown: (() => void) | null = null;
+
+  function setup() {
+    teardown?.();
+    teardown = null;
+
+    const stage = document.querySelector<HTMLElement>('[data-bubbles]');
+    if (!stage) return;
+    const els = Array.from(stage.querySelectorAll<HTMLElement>('a[data-slug]'));
+    if (!els.length) return;
+
+    const counts = els.map((el) => Number(el.dataset.count) || 1);
+    const labels = els.map((el) => el.querySelector<HTMLElement>('.bubble__label'));
+    let nodes: PackNode[] = [];
+    let homes: XY[] = [];
+    let halfLabel: number[] = [];
+    let keep: KeepOut | null = null;
+    let slack = 0;
+    let w = 0;
+    let h = 0;
+    let alpha = 1;
+    let frame = 0;
+    let raf = 0;
+    let phase: 'settle' | 'idle' | 'gone' = 'settle';
+
+    /** Where the server put this bubble, as a fraction of the stage. */
+    function seed(el: HTMLElement): XY | null {
+      const cs = getComputedStyle(el);
+      const x = parseFloat(cs.getPropertyValue(phone() ? '--xt' : '--xw'));
+      const y = parseFloat(cs.getPropertyValue(phone() ? '--yt' : '--yw'));
+      return Number.isFinite(x) && Number.isFinite(y) ? { x: x / 100, y: y / 100 } : null;
+    }
+
+    function draw() {
+      for (let i = 0; i < els.length; i++) {
+        const n = nodes[i];
+        els[i].style.transform = `translate3d(${(n.x - n.r).toFixed(2)}px, ${(n.y - n.r).toFixed(2)}px, 0)`;
+        /* An outer label is wider than its bubble and centred on it, so at
+           phone width the leftmost one used to start at x = -9. Slide it
+           back by however much it overhangs, but no further than that: the
+           label stays under its own bubble wherever there is room. */
+        const half = halfLabel[i];
+        if (half) {
+          const lx = Math.max(half - n.x - slack, 0) - Math.max(n.x + half - w - slack, 0);
+          els[i].style.setProperty('--lx', `${lx.toFixed(1)}px`);
+        }
+      }
+    }
+
+    /**
+     * Give the stage exactly what is left of the first screen, so all nine
+     * bubbles are above the fold instead of two of them hanging below it.
+     * The CSS does this on its own by proportion (see --fit); here we can
+     * measure the head that is actually rendered and revise the height. A
+     * phone stacks and scrolls; leave it to the CSS.
+     *
+     * The inline script at the foot of the markup above has already run
+     * these same lines, before the first paint; this one is for resizes,
+     * and for the second page of a client-side navigation. Keep the two in
+     * step — two answers about one box is exactly what AUDIT2 §2.2 was.
+     */
+    function fitStage() {
+      stage.style.height = '';
+      stage.style.maxWidth = '';
+      stage.style.minHeight = '';
+      if (phone()) return;
+
+      const wrap = stage.parentElement;
+      const page = stage.closest<HTMLElement>('.page');
+      if (!wrap || !page) return;
+
+      const top = stage.getBoundingClientRect().top + window.scrollY;
+      const below =
+        parseFloat(getComputedStyle(wrap).paddingBottom) +
+        parseFloat(getComputedStyle(page).paddingBottom);
+      // the same floor and ceiling as --fit in the stylesheet
+      const want = Math.max(260, Math.min(640, window.innerHeight - top - below));
+
+      stage.style.maxWidth = 'none';
+      stage.style.minHeight = '0';
+      stage.style.height = `${Math.round(want)}px`;
+    }
+
+    /**
+     * The compass is fixed in the bottom-left corner of the *window*, and
+     * this stage positions its own children, so it has to keep that corner
+     * clear itself — --compass-safe is exactly how far the rose and its
+     * halo reach in. Expressed in the stage's own coordinates, at the top
+     * of the page, which is where the stage is.
+     */
+    function compassCorner(): KeepOut | null {
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;width:var(--compass-safe);height:0';
+      stage.appendChild(probe);
+      const safe = probe.getBoundingClientRect().width;
+      probe.remove();
+      if (!safe) return null;
+
+      const box = stage.getBoundingClientRect();
+      const left = box.left; // page x = 0 is the window's left edge
+      const bottom = window.innerHeight - (box.top + window.scrollY);
+      const k = {
+        x0: -left,
+        y0: bottom - safe,
+        x1: safe - left,
+        y1: bottom,
+      };
+      return k.x1 > 0 && k.y0 < h ? k : null;
+    }
+
+    function layout(fresh: boolean) {
+      fitStage();
+      const box = stage.getBoundingClientRect();
+      if (!box.width || !box.height) return false;
+      w = box.width;
+      h = box.height;
+      slack = Math.max(0, parseFloat(getComputedStyle(stage.parentElement!).paddingLeft) - 4);
+
+      const sizes = radiiFor(counts, w, h);
+      const prev = nodes;
+      nodes = sizes.map((s, i) => {
+        const from = !fresh && prev[i] ? { x: prev[i].x / w, y: prev[i].y / h } : seed(els[i]);
+        return {
+          r: s.r,
+          pad: s.pad,
+          x: (from?.x ?? 0.5) * w,
+          y: (from?.y ?? 0.5) * h,
+          vx: 0,
+          vy: 0,
+        };
+      });
+
+      /* The script owns the boxes from here: pixels, and one transform. */
+      for (let i = 0; i < els.length; i++) {
+        els[i].style.left = '0';
+        els[i].style.top = '0';
+        els[i].style.width = `${(nodes[i].r * 2).toFixed(2)}px`;
+        els[i].style.setProperty('--lx', '0px');
+      }
+
+      keep = compassCorner();
+      /* one read of all nine labels per layout, never per frame. An inside
+         label ignores --lx; a phone turns two of them back into outside
+         labels, which do not, so measure them all. */
+      halfLabel = labels.map((l) => (l ? l.getBoundingClientRect().width / 2 : 0));
+
+      if (reduced()) {
+        settle(nodes, w, h); // one static, well-packed frame — no float
+        avoid(nodes, keep);
+      } else {
+        alpha = 1;
+        phase = 'settle';
+      }
+      homes = nodes.map((n) => ({ x: n.x, y: n.y }));
+      draw();
+      return true;
+    }
+
+    function tick(t: number) {
+      if (phase === 'gone') return;
+      raf = requestAnimationFrame(tick);
+      frame++;
+
+      if (phase === 'settle') {
+        const moved = relaxStep(nodes, w, h, alpha);
+        avoid(nodes, keep); // the compass's corner is not ours to settle into
+        alpha *= 0.965;
+        if (alpha < 0.06 || (frame > 30 && moved < 0.05)) {
+          phase = 'idle';
+          // tether each bubble where it is *after* the corner is cleared,
+          // or the idle spring would pull it straight back onto the rose
+          homes = nodes.map((n) => ({ x: n.x, y: n.y }));
+        }
+      } else {
+        if (frame & 1) return; // idle at 30fps; nothing here needs 60
+        idleStep(nodes, homes, w, h, t);
+        avoid(nodes, keep);
+      }
+      draw();
+    }
+
+    function start() {
+      if (raf || phase === 'gone' || reduced() || document.hidden) return;
+      raf = requestAnimationFrame(tick);
+    }
+    function pause() {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+    }
+
+    if (!layout(true)) return;
+    start();
+
+    /* --- clicking a bubble: it swells, the others leave --------------- */
+
+    function launch(el: HTMLElement) {
+      pause();
+      phase = 'gone';
+      stage.dataset.launching = '1';
+      document.body.style.overflow = 'hidden';
+
+      const box = stage.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const away = Math.hypot(vw, vh) * 0.8;
+
+      for (let i = 0; i < els.length; i++) {
+        const n = nodes[i];
+        const cx = box.left + n.x;
+        const cy = box.top + n.y;
+        els[i].style.transition = 'transform 620ms var(--ease), opacity 420ms ease';
+
+        if (els[i] === el) {
+          // fill the screen: grow about the bubble's own centre, which the
+          // translate below parks in the middle of the viewport
+          const scale = Math.min(5, (Math.max(vw, vh) * 1.12) / (n.r * 2));
+          const tx = vw / 2 - box.left - n.r;
+          const ty = vh / 2 - box.top - n.r;
+          els[i].dataset.opening = '1';
+          els[i].style.zIndex = '2';
+          els[i].style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) scale(${scale.toFixed(3)})`;
+        } else {
+          const dx = cx - vw / 2;
+          const dy = cy - vh / 2;
+          const m = Math.hypot(dx, dy) || 1;
+          const tx = n.x - n.r + (dx / m) * away;
+          const ty = n.y - n.r + (dy / m) * away;
+          els[i].style.opacity = '0';
+          els[i].style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0)`;
+        }
+      }
+
+      const href = el.getAttribute('href');
+      window.setTimeout(() => {
+        if (href) navigate(href);
+      }, 480);
+    }
+
+    const onClick = (e: MouseEvent) => {
+      const el = (e.target as Element | null)?.closest<HTMLElement>('a[data-slug]');
+      if (!el || !stage.contains(el)) return;
+      if (e.defaultPrevented || e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (reduced()) return; // no animation to play; just follow the link
+      e.preventDefault();
+      launch(el);
+    };
+
+    let resizeTimer = 0;
+    const onResize = () => {
+      if (phase === 'gone') return;
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        if (layout(false)) start();
+      }, 180);
+    };
+    const onVisibility = () => (document.hidden ? pause() : start());
+
+    stage.addEventListener('click', onClick);
+    window.addEventListener('resize', onResize);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    teardown = () => {
+      phase = 'gone';
+      pause();
+      window.clearTimeout(resizeTimer);
+      stage.removeEventListener('click', onClick);
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }
+
+  function boot() {
+    document.body.style.overflow = ''; // in case we left mid-launch
+    setup();
+  }
+
+  boot();
+  document.addEventListener('astro:page-load', boot);
+  document.addEventListener('astro:before-swap', () => teardown?.());
+</script>
+
+<style>
+  .stage-wrap {
+    margin-top: calc(var(--head-gap) * 0.5);
+    /* The stage shares the page's gutter with the head above it: it used to
+       take a gutter of its own and then centre a 104vh-wide box inside it,
+       which parked the whole composition 245px in from a window edge the
+       title sits 86px from. An outer bubble's label may hang into the
+       gutter; nothing wider than that ever does. */
+    padding-inline: var(--gutter);
+    /* room for the labels that hang under the lowest bubbles */
+    padding-bottom: 2rem;
+  }
+
+  .gstage {
+    /* What is left of the first screen once the head above, the labels
+       below and the compass's own corner are paid for. All nine bubbles
+       have to live inside it — two of them used to sit under the fold with
+       nothing to say so. The script re-measures this exactly; the number
+       here is the no-JS approximation, and it is deliberately generous. */
+    --fit: clamp(260px, calc(100svh - 454px), 640px);
+    position: relative;
+    width: 100%;
+    /* the WIDE pack's own proportion. It is a floor, never a ceiling: the
+       width comes down with the height (max-width) rather than the box
+       being squashed, so the server-rendered percentages stay valid with
+       no JavaScript at all, and all nine bubbles stay on the first screen.
+
+       With JavaScript this cap is lifted — by the inline script below,
+       *before* the first paint, not by the module script after it. That
+       was §2.2: the cap and fitStage() agree only at one window height, so
+       at 1440x700 the stage was painted at 732px and then measured at
+       1252px, and all nine bubbles slid 260px outward on load. */
+    aspect-ratio: 1000 / 355;
+    max-width: calc(var(--fit) * 1000 / 355);
+    /* ...and where the window is narrow enough that the proportion leaves
+       height spare, take it */
+    min-height: var(--fit);
+    margin-inline: auto;
+  }
+
+  .gstage[data-launching] {
+    pointer-events: none;
+  }
+
+  @media (max-width: 720px) {
+    .gstage {
+      /* a phone stacks the clump into a column and scrolls it, so the
+         first-screen fit above does not apply; the compass corner is kept
+         clear by the simulation instead */
+      aspect-ratio: 380 / 620;
+      max-width: 100%;
+      min-height: 0;
+    }
+    .stage-wrap {
+      margin-top: calc(var(--head-gap) * 0.6);
+    }
+  }
+</style>

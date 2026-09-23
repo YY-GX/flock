@@ -1,0 +1,115 @@
+---
+/**
+ * The birds of one day, bloomed out beside the map.
+ *
+ * Same markup and the same `bloom-in` choreography as `MapPlaceGrid`, and
+ * deliberately so: arriving from `/days` the twelve named thumbs glide into
+ * this grid while the rest bloom behind them, exactly as a pin's birds do on
+ * a place page. What differs is the order and the caption.
+ *
+ * ORDER. There is no time of day anywhere in this data (DESIGN2 §0.4), so
+ * this grid is in *field-guide* order — TYPE_ORDER, then English name — and
+ * not in sighting order, because a sighting order does not exist. A grid
+ * that looked chronological would be inventing a morning.
+ *
+ * CAPTION. A place page captions each bird with its date, because a place
+ * spans two years. Every bird here has the same date by construction, so the
+ * caption says its family instead: the thing that actually varies down the
+ * grid, and the thing the order is built on.
+ *
+ * Each tile keeps `data-locs`, so hovering a bird still lights every pin it
+ * was ever seen at — that script lives in MapStage.astro and needs nothing
+ * from here.
+ */
+import BirdThumb from './BirdThumb.astro';
+import type { Bird } from '../lib/types';
+import { typeKey, typeLabel } from '../lib/flock';
+import { placeSlugsOf, placeBySlug, type PlaceView } from '../lib/mapView';
+
+interface Props {
+  birds: Bird[];
+  /** which map is on the page; birds seen off it get named instead of lit */
+  space: 'us' | 'triangle' | null;
+}
+
+const { birds, space } = Astro.props;
+
+const tiles = birds.map((bird) => {
+  const slugs = placeSlugsOf(bird);
+  const elsewhere = slugs
+    .map((s) => placeBySlug.get(s))
+    .filter((p): p is PlaceView => Boolean(p) && p!.space !== space)
+    .map((p) => p.name);
+  return { bird, slugs, elsewhere };
+});
+---
+
+<ol class="bloom day-grid" data-bloom>
+  {tiles.map(({ bird, slugs, elsewhere }, i) => (
+    <li
+      class="bloom__item"
+      style={`--i:${Math.min(i, 26)}`}
+      data-locs={slugs.join(' ')}
+      data-tkey={typeKey(bird.type)}
+      data-else={elsewhere.length ? elsewhere.join(' · ') : undefined}
+    >
+      <BirdThumb bird={bird} size={132} style="--thumb:100%" />
+      <span class="bloom__meta">
+        <span class="bloom__type">{typeLabel(bird.type) || 'Other'}</span>
+        {slugs.length > 1 && <span class="bloom__count">{slugs.length} places</span>}
+      </span>
+    </li>
+  ))}
+</ol>
+
+<style>
+  .bloom {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: clamp(18px, 2.4vw, 34px) clamp(14px, 1.8vw, 26px);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .bloom__item {
+    /* the birds fly out of the ledger row and settle into the grid */
+    animation: bloom-in 520ms var(--ease) both;
+    animation-delay: calc(var(--i) * 26ms);
+  }
+
+  @keyframes bloom-in {
+    from {
+      opacity: 0;
+      transform: translateY(22px) scale(0.86);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .bloom__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 0.6em;
+    padding-top: 0.15em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+    /* two lines of room whether or not the place count wraps: a grid of
+       squares should not go ragged over a chip */
+    min-height: 3em;
+    align-content: start;
+    color: var(--ink-faint);
+  }
+  .bloom__count { color: var(--ink-soft); }
+
+  .bloom__item:hover .bloom__count,
+  .bloom__item:focus-within .bloom__count { color: var(--ink); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bloom__item { animation: none; }
+  }
+</style>

@@ -1,0 +1,249 @@
+---
+/**
+ * One group as a bubble: a round clump of that group's own photographs.
+ *
+ * It is a real <a> to /groups/<slug>, so the view works with no JavaScript
+ * at all and every bubble is keyboard reachable. The floating is added on
+ * top by src/pages/groups.astro, which owns the simulation; this component
+ * only knows how to draw one bubble at whatever size and place it is told.
+ *
+ * Geometry comes in as percentages of the bubble's own diameter
+ * (clusterDiscs), so the same numbers work for the enormous perching clump
+ * and for the three specialists.
+ */
+import BirdThumb from './BirdThumb.astro';
+import type { Bird } from '../lib/types';
+import type { Disc, Group } from '../lib/groupsView';
+import { withBase } from '../lib/paths';
+
+interface Props {
+  group: Group;
+  /** The birds whose photographs build this bubble — all have an image. */
+  reps: Bird[];
+  /** One per rep, same order. */
+  discs: Disc[];
+  /** Roughly how big one photograph lands on screen; drives image width. */
+  thumb: number;
+  /** Position and size, as CSS custom properties. */
+  style?: string;
+  /** Put the name inside the clump. True for the few bubbles big enough. */
+  inside?: boolean;
+  /** Still wide enough for that on a phone's smaller stage. */
+  roomy?: boolean;
+}
+
+const { group, reps, discs, thumb, style = '', inside = false, roomy = false } = Astro.props;
+
+const styleAttr = [`--t: ${group.colour}`, style].filter(Boolean).join('; ');
+const plural = group.count === 1 ? 'bird' : 'birds';
+---
+
+<a
+  class="bubble"
+  href={withBase(`/groups/${group.slug}`)}
+  data-slug={group.slug}
+  data-count={group.count}
+  style={styleAttr}
+  aria-label={`${group.label} — ${group.count} ${plural}`}
+>
+  <span class="bubble__clump">
+    {
+      reps.map((bird, i) => (
+        <span
+          class="bubble__disc"
+          style={`left:${discs[i].x.toFixed(2)}%;top:${discs[i].y.toFixed(2)}%;width:${discs[i].d.toFixed(2)}%`}
+        >
+          <BirdThumb
+            bird={bird}
+            size={thumb}
+            shape="circle"
+            name={false}
+            opens={false}
+            style="width:100%"
+          />
+        </span>
+      ))
+    }
+  </span>
+
+  <span
+    class:list={[
+      'bubble__label',
+      inside && 'bubble__label--in',
+      inside && roomy && 'bubble__label--roomy',
+    ]}
+  >
+    <span class="bubble__name">{group.label}</span>
+    <span class="bubble__count">{group.count}</span>
+  </span>
+</a>
+
+<style>
+  .bubble {
+    /* Two packings are rendered into the attribute: one for a landscape
+       stage (--xw/--yw/--dw) and one for a phone (--xt/--yt/--dt), so the
+       arrangement is already right before any JavaScript arrives. The
+       page's script then replaces all three with pixels and drives a
+       transform of its own. */
+    --x: var(--xw);
+    --y: var(--yw);
+    --d: var(--dw);
+    position: absolute;
+    left: var(--x);
+    top: var(--y);
+    width: var(--d);
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    text-decoration: none;
+    color: inherit;
+    border-radius: 50%;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .bubble__clump {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    /* a faint wash of the group's own colour, so the bubble has a body
+       before a single photograph has decoded */
+    background: color-mix(in oklab, var(--t) 14%, transparent);
+    transition: background var(--dur) var(--ease);
+  }
+
+  .bubble:hover .bubble__clump,
+  .bubble:focus-visible .bubble__clump {
+    background: color-mix(in oklab, var(--t) 26%, transparent);
+  }
+
+  .bubble:focus-visible {
+    outline: 2px solid var(--t);
+    outline-offset: 4px;
+  }
+
+  /* while this bubble is swelling to fill the screen its label would swell
+     with it, so it leaves first */
+  .bubble[data-opening] .bubble__label {
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .bubble__disc {
+    position: absolute;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    /* the discs overlap slightly; a hairline of paper keeps each bird
+       readable as its own photograph rather than one smeared mass */
+    box-shadow: 0 0 0 1.5px var(--paper);
+    transition: transform var(--dur) var(--ease);
+  }
+
+  .bubble:hover .bubble__disc,
+  .bubble:focus-visible .bubble__disc {
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+
+  .bubble__label {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    /* --lx is set by the page's script when a label centred on its bubble
+       would otherwise start off the left edge of the stage (it is wider
+       than a small bubble); 0 everywhere there is room */
+    transform: translateX(calc(-50% + var(--lx, 0px)));
+    /* one run of text, not a flex row: a long name has to be able to wrap
+       between its own words rather than one word per line */
+    display: block;
+    /* An absolutely positioned box shrinks to the space left of it, which
+       for a small bubble is half its width — one word per line. Ask for
+       max-content and let max-width do the wrapping: at least 130% of a
+       small bubble so short names stay on one line — two lines under a
+       little bubble reach further into its neighbour than a wide single
+       line does — and never more than 20ch. */
+    width: max-content;
+    max-width: min(max(190%, 12ch), 20ch);
+    text-align: center;
+    line-height: 1.15;
+    /* A plate, not a halo. The bubbles jostle, so a label lies over a
+       neighbour's photographs often enough, and the biggest three lie over
+       their own. A text-shadow is a blur: it spreads paper thinly and
+       photographic detail walks straight through it — measured worst
+       pixels of 1.0:1 under every name that had one, and in dark it drew a
+       near-black glow around cream text over a bright wing.
+       Paper is a real surface. On it a name and a count carry exactly the
+       ratios the tokens were drawn for — 15.3:1 and 4.9:1 in light, 15.0:1
+       and 5.5:1 in dark — and no photograph can change that. Over the
+       page's own paper, which is where six of the nine sit, the plate is
+       invisible. Even 5% of translucency costs the count its AA margin
+       over a bright wing, so it stays opaque. */
+    padding: 0.2em 0.5em 0.26em;
+    border-radius: 2px;
+    background: var(--paper);
+  }
+
+  /* the three biggest bubbles wear their name in the middle, the way a
+     packed-bubble chart does: outside there is nowhere to put it that is
+     not somebody else's photograph */
+  .bubble__label--in {
+    top: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 82%;
+  }
+
+  .bubble__name {
+    font-family: var(--serif);
+    text-wrap: balance;
+    font-size: var(--fs-base);
+    color: var(--ink);
+  }
+
+  /* The group's colour is carried by the bubble itself — it is a mark, and
+     it clears 3:1 as one. At var(--fs-micro) the same nine colours measure
+     2.3:1 to 3.6:1 on paper, so the digits take the quietest ink that
+     still clears AA instead. */
+  .bubble__count {
+    margin-left: 0.45em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--track-label);
+    color: var(--ink-faint);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bubble__disc,
+    .bubble__clump {
+      transition: none;
+    }
+    .bubble:hover .bubble__disc,
+    .bubble:focus-visible .bubble__disc {
+      transform: translate(-50%, -50%);
+    }
+  }
+
+  @media (max-width: 720px) {
+    .bubble {
+      --x: var(--xt);
+      --y: var(--yt);
+      --d: var(--dt);
+    }
+    .bubble__label {
+      max-width: min(max(190%, 12ch), 18ch);
+    }
+    .bubble__name {
+      font-size: var(--fs-small);
+    }
+
+    /* A phone's bubbles are about half as wide, and a plate can only be as
+       wide as the bubble it lies on. The two biggest still hold their name;
+       the third puts it back underneath, where the default already is. */
+    .bubble__label--in:not(.bubble__label--roomy) {
+      top: 100%;
+      transform: translateX(calc(-50% + var(--lx, 0px)));
+    }
+    .bubble__label--roomy {
+      max-width: 82%;
+    }
+  }
+</style>

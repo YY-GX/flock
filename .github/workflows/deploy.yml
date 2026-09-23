@@ -1,0 +1,114 @@
+# Build the site and publish it to https://yy-gx.github.io/flock/
+#
+# dist/ is never committed: the build uploads a Pages artifact and a second
+# job deploys it, which is the flow GitHub supports now. The repository
+# settings need Pages → Build and deployment → Source = "GitHub Actions"
+# once, by hand; nothing here can turn that on.
+#
+# A push to main builds, verifies and deploys. A pull request builds and
+# verifies and stops there, so a broken build is caught before it is live.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one half-way: a cancelled
+# deploy-pages can leave the site on an incomplete artifact.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # Where the 6.62 GB of original photographs live. This is a public bucket
+  # URL, not a secret — it is compiled into the shipped JavaScript either way,
+  # which is why it is here in the open rather than in a repository secret.
+  # The same value is in .env for local builds (see .env.example).
+  PUBLIC_ORIGINALS_BASE: https://pub-6cf8120c2be142589cd5b84483c3bb6e.r2.dev
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # node_modules rather than just ~/.npm: sharp is most of the install and
+      # restoring it whole skips its binary download entirely. .astro is
+      # excluded so it does not live in two caches at once.
+      - name: Cache node_modules
+        id: modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            !node_modules/.astro
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-node24-${{ hashFiles('package-lock.json') }}
+
+      - name: Install
+        if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+
+      # A cold build runs ~1,500 sharp transforms over the 1,278 photographs
+      # and takes minutes; a warm one is seconds. Astro keys each cached
+      # transform by the source's content hash and the transform's arguments,
+      # so a stale entry is simply never read — which is why restore-keys can
+      # fall back to any previous cache and still be correct.
+      - name: Cache Astro's image transforms
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.astro
+          key: astro-assets-${{ runner.os }}-${{ hashFiles('photos-web/manifest.json', 'src/data/*.json', 'astro.config.mjs') }}
+          restore-keys: |
+            astro-assets-${{ runner.os }}-
+
+      # Fails before the build if the committed photo set has drifted from
+      # photos.json — a photograph added in Notion and synced but never passed
+      # through `npm run photos:web` would otherwise ship as a hollow frame.
+      - name: Check the committed photo set
+        run: npm run photos:web -- --check
+
+      # `prebuild` stages photos-web/ into src/assets/photos (the originals are
+      # not here) and then declines to redraw the OG cards, because the cards
+      # in public/og were drawn from the originals and are committed.
+      - name: Build
+        run: npm run build
+
+      - name: Verify
+        run: npm run verify
+
+      - name: Configure Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

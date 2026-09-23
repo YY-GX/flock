@@ -1,0 +1,354 @@
+---
+/**
+ * The drawer labels on the front of the specimen cabinet.
+ *
+ * Search, three sort orders, and three facet groups (Type, Tags, Colours).
+ * All of it is plain markup with `data-` hooks; the filtering itself lives in
+ * the module script on /list. Every control is a real `<button>` or `<input>`,
+ * so the page is usable — just unfiltered — before the script runs.
+ *
+ * Every chip carries a count that the script rewrites as you filter, showing
+ * how many birds you would get if you also pressed that one.
+ *
+ * The three facet groups are disclosures, not open lists. Spread out they took
+ * a third of the first screen (37% at 768px) on a page whose whole point is the
+ * 238 plates; closed they are one line of labels with a count each, and the
+ * badge turns to the number you have picked so a closed drawer still says what
+ * it is doing. Type opens itself where there is room for it (the inline script
+ * below closes it under 700px, before the first paint), and any group named in
+ * the query string opens on arrival.
+ */
+import type { Facet } from '../lib/listView';
+
+interface Props {
+  /** Spotted birds — what the chip counts are measured against, and how many
+   *  cells the cabinet grid holds. NOT how many photographs there are: two of
+   *  them render hollow. The readout below therefore says "recorded", and
+   *  /list's lede does the counting the word "photographed" needs. */
+  total: number;
+  /** Cards for birds nobody has seen yet, shown as frames at the foot. */
+  ghostTotal: number;
+  types: Facet[];
+  tags: Facet[];
+  colors: Facet[];
+}
+
+const { total, ghostTotal, types, tags, colors } = Astro.props;
+---
+
+<form class="cab" id="cab-controls" role="search" autocomplete="off" novalidate>
+  <div class="cab__row cab__row--top">
+    <div class="cab__search">
+      <label class="sr-only" for="cab-q">Search by name or scientific name</label>
+      <input
+        id="cab-q"
+        type="search"
+        name="q"
+        placeholder="Search a name, a genus…"
+        spellcheck="false"
+        autocapitalize="none"
+      />
+      <kbd class="cab__key" aria-hidden="true">/</kbd>
+    </div>
+
+    <div class="cab__sorts" role="group" aria-label="Sort the cabinet">
+      <button type="button" class="chip chip--sort" data-sort="name" aria-pressed="true">A–Z</button>
+      <button type="button" class="chip chip--sort" data-sort="date" aria-pressed="false">First spotted</button>
+      <button type="button" class="chip chip--sort" data-sort="group" aria-pressed="false">By group</button>
+    </div>
+
+    <p class="cab__count meta" data-count aria-live="polite">
+      {total} recorded · {ghostTotal} still to come
+    </p>
+    <button type="button" class="cab__clear" data-clear hidden>Clear filters</button>
+  </div>
+
+  <div class="cab__facets">
+    <fieldset class="facet">
+      <legend class="sr-only">Type</legend>
+      <details class="facet__more" data-facet-details data-wide-open open>
+        <summary class="facet__legend facet__summary">
+          Type <span class="facet__badge" data-badge data-all={String(types.length)}>{types.length}</span>
+        </summary>
+        <div class="facet__chips">
+          {types.map((f) => (
+            <button
+              type="button"
+              class="chip chip--type"
+              data-facet="type"
+              data-value={f.slug}
+              aria-pressed="false"
+              style={`--dot: ${f.colour}`}
+            >
+              <span class="chip__dot" aria-hidden="true"></span>
+              <span class="chip__label">{f.label}</span>
+              <span class="chip__n" data-n>{f.count}</span>
+            </button>
+          ))}
+        </div>
+      </details>
+    </fieldset>
+
+    {/*
+      Decide `open` before the first paint, not after it.
+
+      The drawer above ships open because on a wide screen there is room
+      for nine coloured dots, and /list's module script closes it below
+      700px — but that script runs after the first paint, so the reader saw
+      the open drawer, and then the whole 238-plate cabinet jumped 147px up
+      underneath it (CLS 0.0748 at 430x932, AUDIT2 §2.1). These four lines
+      run while the parser is still inside the form, so the cabinet is only
+      ever laid out once. The same media query as /list, so the two cannot
+      disagree; the close there is now a no-op on load and still does the
+      work after a client-side navigation.
+    */}
+    <script is:inline>
+      if (!window.matchMedia('(min-width: 700px)').matches) {
+        document
+          .querySelectorAll('[data-wide-open][open]')
+          .forEach(function (d) { d.removeAttribute('open'); });
+      }
+    </script>
+
+    <fieldset class="facet">
+      <legend class="sr-only">Colours</legend>
+      <details class="facet__more" data-facet-details>
+        <summary class="facet__legend facet__summary">
+          Colours <span class="facet__badge" data-badge data-all={String(colors.length)}>{colors.length}</span>
+        </summary>
+        <div class="facet__chips">
+          {colors.map((f) => (
+            <button type="button" class="chip" data-facet="color" data-value={f.slug} aria-pressed="false">
+              <span class="chip__label">{f.label}</span>
+              <span class="chip__n" data-n>{f.count}</span>
+            </button>
+          ))}
+        </div>
+      </details>
+    </fieldset>
+
+    <fieldset class="facet facet--tags">
+      <legend class="sr-only">Tags</legend>
+      <details class="facet__more" data-facet-details data-tags-details>
+        <summary class="facet__legend facet__summary">
+          Tags <span class="facet__badge" data-badge data-all={String(tags.length)}>{tags.length}</span>
+        </summary>
+        <div class="facet__chips facet__chips--tags">
+          {tags.map((f) => (
+            <button type="button" class="chip" data-facet="tag" data-value={f.slug} aria-pressed="false">
+              <span class="chip__label">{f.label}</span>
+              <span class="chip__n" data-n>{f.count}</span>
+            </button>
+          ))}
+        </div>
+      </details>
+    </fieldset>
+  </div>
+</form>
+
+<style>
+  .cab {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    padding: 0 var(--gutter) 1.2rem;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+
+  .cab__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.8rem 2rem;
+  }
+
+  /* ---- search ---- */
+
+  .cab__search {
+    position: relative;
+    flex: 1 1 22ch;
+    max-width: 38ch;
+    border-bottom: 1px solid var(--rule);
+    transition: border-color var(--dur) var(--ease);
+  }
+  .cab__search:focus-within { border-bottom-color: var(--ink-soft); }
+
+  .cab__search input {
+    width: 100%;
+    padding: 0.35em 2em 0.45em 0;
+    font-family: var(--serif);
+    font-size: var(--fs-body);
+    color: var(--ink);
+    background: none;
+    border: 0;
+    border-radius: 0;
+    appearance: none;
+  }
+  .cab__search input::placeholder { color: var(--ink-faint); }
+  .cab__search input:focus { outline: none; }
+  .cab__search input::-webkit-search-cancel-button { appearance: none; }
+
+  .cab__key {
+    position: absolute;
+    right: 0;
+    bottom: 0.5em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    line-height: 1;
+    padding: 0.25em 0.45em;
+    color: var(--ink-faint);
+    box-shadow: inset 0 0 0 1px var(--rule-soft);
+  }
+  .cab__search:focus-within .cab__key { opacity: 0; }
+
+  /* ---- chips ---- */
+
+  .cab__sorts { display: flex; flex-wrap: wrap; gap: 0.2rem 1.1rem; }
+
+  .chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.42em;
+    padding: 0.25em 0;
+    font-family: var(--sans);
+    font-size: var(--fs-tiny);
+    line-height: 1.4;
+    color: var(--ink-soft);
+    background: none;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    cursor: pointer;
+    transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  }
+
+  /* An option that would empty the cabinet stops advertising itself — but it
+     stays live, so it also stays readable. De-emphasis is a quieter ink, never
+     opacity: `opacity: 0.35` on --ink-soft measured 1.72:1 / 2.00:1. Only the
+     dot, which is a mark and not a word, is allowed to fade. */
+  .chip[data-empty] { color: var(--ink-faint); }
+  .chip[data-empty] .chip__dot { opacity: 0.5; }
+
+  .chip:hover { color: var(--ink); }
+  /* A pressed chip is carried by its ink first — --ink-soft to --ink, 6.84:1
+     to 15.29:1 — and the rule underneath it is the second mark, which is why
+     it can be the season's colour without anything depending on a hue that
+     measures 2.11:1 in July. The Type chips keep their own group colour, as
+     they always have; that rule is about which group, not about state. */
+  .chip[aria-pressed='true'] {
+    color: var(--ink);
+    border-bottom-color: var(--accent);
+  }
+  .chip--type[aria-pressed='true'] { border-bottom-color: var(--dot); }
+
+  .chip__dot {
+    width: 0.5em;
+    height: 0.5em;
+    border-radius: 50%;
+    background: var(--dot, var(--ink-faint));
+    transform: translateY(-0.05em);
+  }
+
+  .chip__label { white-space: nowrap; }
+
+  .chip__n {
+    font-size: var(--fs-micro);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-faint);
+  }
+
+  /* ---- facets ---- */
+
+  /* Closed, the three groups are one line of labels. Open, a group claims the
+     whole line so its chips read as a block rather than a narrow column. */
+  .cab__facets {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 2.2rem;
+  }
+
+  .facet {
+    display: block;
+    flex: 0 0 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .facet:has(.facet__more[open]) { flex: 1 0 100%; }
+
+  .facet__more { min-width: 0; }
+
+  .facet__legend {
+    padding: 0;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  .facet__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.1rem 1.1rem;
+    min-width: 0;
+    padding-top: 0.55rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .facet__summary {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5em;
+    padding: 0.2em 0;
+    cursor: pointer;
+    list-style: none;
+    transition: color var(--dur-fast) var(--ease);
+  }
+  .facet__summary::-webkit-details-marker { display: none; }
+  .facet__summary::after {
+    content: '+';
+    font-size: var(--fs-tiny);
+    letter-spacing: 0;
+    color: var(--ink-faint);
+  }
+  .facet__more[open] .facet__summary::after { content: '–'; }
+  .facet__summary:hover { color: var(--ink-soft); }
+
+  /* a closed drawer with something picked in it still says so */
+  .facet__more[data-on] .facet__summary { color: var(--ink); }
+  .facet__more[data-on] .facet__badge { color: var(--ink); }
+
+  .facet__badge {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    color: var(--ink-faint);
+  }
+
+  .facet__chips--tags { column-gap: 1.1rem; }
+
+  /* ---- foot ---- */
+
+  .cab__count { margin: 0; }
+
+  .cab__clear {
+    padding: 0;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    background: none;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    cursor: pointer;
+  }
+  .cab__clear:hover { color: var(--ink); border-bottom-color: var(--ink-soft); }
+
+  @media (max-width: 640px) {
+    .cab__facets { gap: 0.5rem 1.6rem; }
+    .facet__chips { gap: 0.1rem 0.95rem; }
+  }
+</style>

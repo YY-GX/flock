@@ -1,0 +1,1173 @@
+---
+/**
+ * /birds/<slug> — one bird, as a field-guide page.
+ *
+ * All 281 get one, including the 43 nobody has photographed: a life list that
+ * only deep-links the birds you have already found is not a life list. The
+ * plate keeps the `bird-<slug>` transition name the cabinet gave it, so
+ * arriving from /list the thumbnail grows into the photograph.
+ *
+ * No <BirdPanel /> here on purpose. This page *is* the panel's content, at
+ * full size and with a URL, and the payload would be 300 KB of nothing.
+ *
+ * It does run the panel's photo viewer, though — src/lib/plateViewer.ts, the
+ * same module <BirdPanel /> drives, over this page's own markup. Clicking a
+ * frame in the strip, the arrows, Left/Right and a swipe all page the hero,
+ * with the decode-before-swap and the two-neighbour prefetch the overlay has.
+ * The hero sits in the same mat, so paging from a landscape to a portrait
+ * changes the shape of the mat and never the size of the page.
+ */
+import { getImage } from 'astro:assets';
+import Base from '../../layouts/Base.astro';
+import GhostFrame from '../../components/GhostFrame.astro';
+import { birds } from '../../lib/data';
+import { photoAsset } from '../../lib/images';
+import {
+  birdTransitionStyle,
+  canonicalType,
+  formatDate,
+  splitName,
+  typeLabel,
+  typeVar,
+} from '../../lib/flock';
+import { slugify } from '../../lib/groupsView';
+import {
+  cameraFor,
+  concernWorthShowing,
+  formatPopulation,
+  formatSize,
+  neighbours,
+  placesFor,
+  twinOf,
+} from '../../lib/listView';
+import { dayPage, plateFiles, plateOf } from '../../lib/panelData';
+import type { Bird } from '../../lib/types';
+import { withBase } from '../../lib/paths';
+
+export function getStaticPaths() {
+  return birds.map((bird) => ({ params: { slug: bird.slug }, props: { bird } }));
+}
+
+interface Props {
+  bird: Bird;
+}
+
+const { bird } = Astro.props;
+
+const { english, gloss } = splitName(bird.name);
+const type = canonicalType(bird.type);
+const groupSlug = type ? slugify(typeLabel(type)) : '';
+
+/* ---- the inscription (B8) ----
+ *
+ * A Chinese bird painting carries its name beside the image, set vertically
+ * in a Song-style serif, not underneath it in grey sans. Every one of the 238
+ * photographed birds has such a name, so on this page the gloss leaves the
+ * subtitle line and goes to stand in the plate's right margin.
+ *
+ * Two conditions, and both of them are about honesty rather than taste:
+ *
+ *  - Only 2 of the 43 unphotographed birds have a gloss at all, so the column
+ *    has to be able to not exist. `inscribed` is false for the other 41 and
+ *    .bird__plates stays exactly the single column it was.
+ *  - One gloss in the whole record is not Chinese — "Flaco (Eurasian eagle
+ *    owl)". `text-orientation: upright` would stack its nineteen Latin
+ *    letters down the margin, and it is an English alias, not a second name.
+ *    It stays on the subtitle line, in the Latin text face, at every width.
+ */
+const glossLatin = /[A-Za-z]/.test(gloss);
+const inscribed = Boolean(gloss) && !glossLatin;
+
+/* ---- the season the record fell in (B9) ----
+ * Meteorological, northern — SEASON_OF_MONTH in src/lib/timeline.ts. The dot
+ * is a mark beside a date that is written out in words, so it carries no
+ * information of its own; see .season-dot in global.css §4. */
+const SEASONS = [
+  'winter', 'winter', 'spring', 'spring', 'spring', 'summer',
+  'summer', 'summer', 'autumn', 'autumn', 'autumn', 'winter',
+];
+const firstSeason = bird.firstSpotted
+  ? SEASONS[Math.min(11, Math.max(0, Number(bird.firstSpotted.slice(5, 7)) - 1))]
+  : '';
+
+/* ---- a record that disagrees with itself ----
+ *
+ * One card in Notion is marked `spotted: false` and still carries a date, a
+ * type and a place (Northern Rough-winged Swallow, 9 Jun 2026, Seattle — it
+ * is on TODO.md's owner list). Read straight, this page printed "not yet
+ * seen" and "Still on the list. Nothing to show yet." two inches above
+ * "First spotted · 9 Jun 2026 / Seen at · Seattle, WA", asserting both
+ * halves of a contradiction as settled fact.
+ *
+ * The honest page says neither half. It says the record disagrees, shows
+ * what the record actually holds, and leaves it. That costs nothing and it
+ * survives the next sync whichever way the owner resolves it — the branch
+ * simply stops firing.
+ *
+ * The date is not linked here. /days is built from the spotted birds, so
+ * /days/2026-06-09 holds one bird and this is not it; a link to a day that
+ * does not list you is the same claim in another place.
+ */
+const conflicted = !bird.spotted && Boolean(bird.firstSpotted);
+
+/* ---- the way out of the bird and into the day it was found ----
+ * The overlay's date is a link to /days/<iso>; this page prints the same
+ * date and must lead to the same place. `dayPage()` is the overlay's own
+ * gate (src/lib/panelData.ts): it is built from `timelineBirds`, the very
+ * array /days/[iso].astro gets its 64 routes from, and returns '' for a
+ * date the ledger has no page for — so this can never emit /days/undefined
+ * and the 42 birds with no date at all never reach it (the <dt>/<dd> pair
+ * below only renders for a dated bird). Do not re-derive the set here. */
+const dayIso = conflicted ? '' : dayPage(bird.firstSpotted);
+
+/* ---- plates ---- */
+
+/* `plateFiles` and `plateOf` are the overlay's own, so this page's hero is
+   byte-for-byte the file the panel would show — one transform, not two. Both
+   sides drop a file with no asset behind it, which is what keeps `sources`
+   and `plates` index-for-index with each other, and so with the strip.
+
+   The file name travels with the asset because it is also the object key of
+   the untouched original in R2 — that is what lets plateOf decide whether a
+   plate has an original worth offering. See the block at the top of
+   src/lib/panelData.ts. */
+const sources = plateFiles(bird)
+  .map((file) => ({ file, asset: photoAsset(file) }))
+  .filter((s): s is { file: string; asset: NonNullable<typeof s.asset> } => Boolean(s.asset));
+
+const plates = await Promise.all(sources.map((s) => plateOf(s.asset, s.file)));
+const hero = plates[0] ?? null;
+
+const sized = (a: (typeof sources)[number]['asset'], target: number) => {
+  const w = Math.min(target, a.width || target);
+  return { w, h: Math.round(w * ((a.height || w) / (a.width || w))) };
+};
+
+/* The contact strip is thumbnails, not plates. 240px in a ~110px frame is
+   already 2x on a retina screen; the 520px it used to build was four times
+   the size on screen and, for a bird with 24 frames, 20 MB of decoded bitmap
+   sitting under the photograph you were actually looking at. */
+const strip = await Promise.all(
+  sources.map(async ({ asset }) => {
+    const box = sized(asset, 240);
+    const out = await getImage({ src: asset, width: box.w, format: 'webp', quality: 72 });
+    return { ...box, src: out.src };
+  }),
+);
+
+const many = plates.length > 1;
+const heroAlt = `${english}, photographed`;
+
+/* ---- words ---- */
+
+const places = placesFor(bird);
+const camera = cameraFor(bird);
+const twin = twinOf(bird);
+const { prev, next } = neighbours(bird);
+
+const concern = concernWorthShowing(bird.conservation);
+const size = formatSize(bird.sizeInches);
+const population = formatPopulation(bird.population);
+
+/*
+ * Notion only carries a length for 126 of the 281 birds. Migratory
+ * is a boolean, so it always has *a* value — which on its own would give half
+ * the site a "Field marks" block containing the single word "Resident". The
+ * block appears only when something real sits in it.
+ */
+const allMarks = [
+  { label: 'Length', value: size },
+  { label: 'Colours', value: (bird.colors ?? []).join(' · ') },
+  { label: 'Wings', value: (bird.wingShape ?? []).join(' · ') },
+  { label: 'Tail', value: (bird.tailShape ?? []).join(' · ') },
+  { label: 'In flight', value: (bird.behavior ?? []).join(' · ') },
+  { label: 'Movement', value: bird.migratory ? 'Migratory' : 'Resident', soft: true },
+  { label: 'Conservation', value: concern },
+  { label: 'World population', value: population },
+].filter((m) => m.value);
+
+const marks = allMarks.some((m) => !m.soft) ? allMarks : [];
+
+/* A meta description is one line with no room for a caveat, so the card that
+   disagrees with itself does not get to assert "Seen at" in it either. */
+const shotWhere =
+  places.length && !conflicted
+    ? `Seen at ${places[0].name}${places.length > 1 ? ` and ${places.length - 1} more` : ''}.`
+    : conflicted
+      ? 'The field notes disagree with themselves about this one.'
+      : '';
+const desc = bird.description
+  ? bird.description.slice(0, 150)
+  : `${english}${bird.genus ? ` (${bird.genus})` : ''}. ${shotWhere}`.trim();
+---
+
+<Base title={`${english} · Birding Checklist`} description={desc}>
+  <section
+    class:list={['page', 'bird', inscribed && 'bird--inscribed']}
+    style={`--t: ${typeVar(bird.type)}`}
+  >
+    <header class="page__head bird__head">
+      <p class="eyebrow bird__crumbs">
+        <a href={withBase("/list")}>Life list</a>
+        {type && (
+          <>
+            <span aria-hidden="true">·</span>
+            <a href={withBase(`/groups/${groupSlug}`)}>{typeLabel(type)}</a>
+          </>
+        )}
+      </p>
+      <h1 class="bird__name">{english}</h1>
+      <p class="bird__sub">
+        {bird.genus && <span class="genus bird__genus">{bird.genus}</span>}
+        {gloss && (
+          <span
+            class="bird__gloss"
+            lang={glossLatin ? undefined : 'zh-Hans'}
+            data-latin={glossLatin ? '' : undefined}
+          >{gloss}</span>
+        )}
+      </p>
+    </header>
+
+    <div class="bird__body">
+      <div class="bird__plates">
+        {/* The inscription stands in the right margin of the frame and is
+            first in the DOM, so a screen reader hears the bird's two names
+            together — English in the <h1>, Chinese here — before it reaches
+            the photographs. It is placed into column 2 by the grid. */}
+        {inscribed && (
+          <p class="bird__inscription" lang="zh-Hans">{gloss}</p>
+        )}
+
+        <div class="bird__column">
+          {hero ? (
+            <div class="bird__viewer" data-frame data-alt={heroAlt}>
+              <figure class="bird__plate" style={birdTransitionStyle(bird)}>
+                {/* One box the size of the mat, holding both layers. Zoom scales
+                    this, so the cross-fade and --iw/--ih are untouched. */}
+                <div class="bird__zoom" data-stage>
+                  <img
+                    class="bird__photo is-front"
+                    data-layer="a"
+                    src={hero.src}
+                    width={hero.w}
+                    height={hero.h}
+                    style={`--iw: ${hero.w}px; --ih: ${hero.h}px`}
+                    alt={heroAlt}
+                    loading="eager"
+                    fetchpriority="high"
+                    decoding="async"
+                    draggable="false"
+                  />
+                  <img class="bird__photo" data-layer="b" alt="" decoding="async" draggable="false" hidden />
+                </div>
+              </figure>
+
+              {/* The same corner the overlay uses, for the same two controls:
+                  the magnifier goes as far as the 1200px file we built, the
+                  link goes past it to the untouched original in R2. Both are
+                  filled and revealed by src/lib/plateViewer.ts — one
+                  implementation, exactly as with zoom and paging — so neither
+                  is rendered with a URL here. */}
+              <div class="bird__tools">
+                <button
+                  class="bird__zoombtn"
+                  type="button"
+                  data-plate-zoom
+                  aria-label="Enlarge the photograph"
+                  aria-pressed="false"
+                  hidden
+                >
+                  <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true">
+                    <circle cx="10.5" cy="10.5" r="6.25" fill="none" stroke="currentColor" stroke-width="1.3" />
+                    <path d="M15.2 15.2 L20 20" fill="none" stroke="currentColor" stroke-width="1.3"
+                      stroke-linecap="round" />
+                    <path d="M7.4 10.5 H13.6" fill="none" stroke="currentColor" stroke-width="1.3"
+                      stroke-linecap="round" />
+                    <path class="bird__zoomplus" d="M10.5 7.4 V13.6" fill="none" stroke="currentColor"
+                      stroke-width="1.3" stroke-linecap="round" />
+                  </svg>
+                </button>
+
+                <a
+                  class="bird__orig"
+                  data-plate-original
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  hidden
+                >
+                  <span data-orig-label></span>
+                  <svg class="bird__origout" viewBox="0 0 12 12" width="9" height="9" aria-hidden="true">
+                    <path d="M4.1 7.9 L8.3 3.7 M4.9 3.5 H8.5 V7.1" fill="none" stroke="currentColor"
+                      stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </a>
+              </div>
+
+              {many && (
+                <>
+                  <button
+                    class="bird__page bird__page--prev"
+                    type="button"
+                    data-plate-step="-1"
+                    aria-label="Previous photograph"
+                  >
+                    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                      <path d="M15 4 L7 12 L15 20" fill="none" stroke="currentColor" stroke-width="1.25"
+                        stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <button
+                    class="bird__page bird__page--next"
+                    type="button"
+                    data-plate-step="1"
+                    aria-label="Next photograph"
+                  >
+                    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                      <path d="M9 4 L17 12 L9 20" fill="none" stroke="currentColor" stroke-width="1.25"
+                        stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <p class="bird__count" data-count>1 / {plates.length}</p>
+                </>
+              )}
+              <p class="sr-only" role="status" aria-live="polite" data-live></p>
+            </div>
+          ) : (
+            <GhostFrame
+              bird={bird}
+              big
+              note={conflicted ? 'the record disagrees' : bird.spotted ? 'photograph missing' : 'not yet seen'}
+            />
+          )}
+
+          {many && (
+            <div class="bird__strip" data-strip role="group" aria-label={`${plates.length} photographs`}>
+              {strip.map((p, i) => (
+                <button
+                  class="bird__frame"
+                  type="button"
+                  data-plate={i}
+                  aria-current={i === 0 ? 'true' : undefined}
+                  aria-label={`Photograph ${i + 1} of ${plates.length}`}
+                >
+                  <img src={p.src} width={p.w} height={p.h} alt="" loading={i < 6 ? 'eager' : 'lazy'} decoding="async" />
+                </button>
+              ))}
+            </div>
+          )}
+
+          <p class="bird__platefoot">
+            {hero && (
+              <span>
+                {plates.length} {many ? 'frames' : 'frame'}
+                {camera ? ` · ${camera}` : ''}
+              </span>
+            )}
+            {!hero && bird.spotted && (
+              <span>Recorded in the field notes, but no photograph made it back.</span>
+            )}
+            {!hero && conflicted && (
+              <span>
+                The record disagrees with itself here: this card is marked unseen, and it
+                carries a date and a place anyway. Both are printed as the record has
+                them, and neither is treated as settled.
+              </span>
+            )}
+            {!hero && !bird.spotted && !conflicted && (
+              <span>Still on the list. Nothing to show yet.</span>
+            )}
+          </p>
+        </div>
+      </div>
+
+      <div class="bird__facts">
+        {bird.description && <p class="bird__desc">{bird.description}</p>}
+
+        <dl class="bird__where">
+          {bird.firstSpotted && (
+            <>
+              <dt>First spotted</dt>
+              <dd>
+                {firstSeason && (
+                  <i
+                    class="season-dot"
+                    style={`--s: var(--season-${firstSeason})`}
+                    aria-hidden="true"
+                  ></i>
+                )}{dayIso ? (
+                  <a class="bird__daylink" href={withBase(`/days/${dayIso}`)}>{formatDate(bird.firstSpotted)}</a>
+                ) : (
+                  formatDate(bird.firstSpotted)
+                )}
+              </dd>
+            </>
+          )}
+          {places.length > 0 && (
+            <>
+              <dt>{places.length === 1 ? 'Seen at' : `Seen at ${places.length} places`}</dt>
+              <dd class="bird__places">
+                {places.map((p) => (
+                  <a href={withBase(`/places/${p.slug}`)} class="bird__place">{p.name}</a>
+                ))}
+              </dd>
+            </>
+          )}
+          {type && (
+            <>
+              <dt>Group</dt>
+              <dd><a href={withBase(`/groups/${groupSlug}`)} class="bird__grouplink">{typeLabel(type)}</a></dd>
+            </>
+          )}
+        </dl>
+
+        {marks.length > 0 && (
+          <section class="bird__marks" aria-labelledby="marks-head">
+            <h2 class="bird__markshead" id="marks-head">Field marks</h2>
+            <dl class="bird__marklist">
+              {marks.map((m) => (
+                <>
+                  <dt>{m.label}</dt>
+                  <dd>{m.value}</dd>
+                </>
+              ))}
+            </dl>
+          </section>
+        )}
+
+        {marks.length === 0 && (
+          <p class="bird__thin">No measurements for this one in the field notes yet.</p>
+        )}
+
+        {(bird.tags ?? []).length > 0 && (
+          <section class="bird__tags" aria-labelledby="tags-head">
+            <h2 class="bird__markshead" id="tags-head">Filed under</h2>
+            <p class="bird__taglist">
+              {(bird.tags ?? []).map((tag) => (
+                <a
+                  class="bird__tag"
+                  href={withBase(groupSlug ? `/groups/${groupSlug}#tag-${slugify(tag)}` : '/groups')}
+                >{tag}</a>
+              ))}
+            </p>
+          </section>
+        )}
+
+        {twin && (
+          <p class="bird__twin">
+            The field notes hold two cards for this bird —
+            {' '}<a href={withBase(`/birds/${twin.bird.slug}`)}>the other one</a>
+            {' '}is the {twin.hasPhoto ? 'photographed' : 'unphotographed'} record.
+          </p>
+        )}
+      </div>
+    </div>
+
+    <nav class="bird__nav" aria-label="Neighbouring birds">
+      <span class="bird__navside">
+        {prev && (
+          <a href={withBase(`/birds/${prev.bird.slug}`)}>
+            <span aria-hidden="true">←</span> {prev.english}
+          </a>
+        )}
+      </span>
+      <a class="bird__navup" href={withBase("/list")}>The whole cabinet</a>
+      <span class="bird__navside bird__navside--end">
+        {next && (
+          <a href={withBase(`/birds/${next.bird.slug}`)}>
+            {next.english} <span aria-hidden="true">→</span>
+          </a>
+        )}
+      </span>
+    </nav>
+  </section>
+
+  {/* One bird's plates, ~90 bytes each — the overlay's `more` codec exists to
+      squeeze 238 birds into every other page's HTML, and squeezing one bird
+      here would only be a second thing to keep in step with the pruner. The
+      file names stay verbatim, which is what src/integrations/prune-originals
+      scans for. */}
+  {hero && (
+    <script
+      type="application/json"
+      id="bird-plates"
+      is:inline
+      set:html={JSON.stringify(plates).replace(/</g, '\\u003c')}
+    ></script>
+  )}
+</Base>
+
+<script>
+  /**
+   * The contact strip, wired to the panel's own viewer.
+   *
+   * Everything about paging and about zoom — decode before swap, the
+   * cross-fade, the token that drops a slow decode the user has already paged
+   * past, warming the two neighbours, the scale ceiling, the pan clamp, the
+   * pinch — is src/lib/plateViewer.ts, shared with <BirdPanel />. This file
+   * only finds the elements, marks the current frame in the strip, and takes
+   * the keys.
+   *
+   * A bird with exactly one photograph gets a viewer too: it has nothing to
+   * page but it still has something to enlarge.
+   */
+  import { createPlateViewer, type PlateImage, type PlateViewer } from '../../lib/plateViewer';
+
+  /** The viewer on the page we are looking at, for the document-level keys. */
+  let current: PlateViewer | null = null;
+  let keysWired = false;
+
+  function setup() {
+    const frame = document.querySelector<HTMLElement>('[data-frame]');
+    // A bird with no photograph has no frame; drop the keys' viewer with it.
+    if (!frame) {
+      current = null;
+      return;
+    }
+    // Idempotent, and `current` must survive the second call: astro:page-load
+    // fires on the first load too, straight after this module has run.
+    if (frame.dataset.wired === '1') return;
+    frame.dataset.wired = '1';
+
+    const front = frame.querySelector<HTMLImageElement>('[data-layer="a"]');
+    const back = frame.querySelector<HTMLImageElement>('[data-layer="b"]');
+    const payload = document.getElementById('bird-plates');
+    if (!front || !back || !payload) return;
+
+    let plates: PlateImage[] = [];
+    try {
+      plates = JSON.parse(payload.textContent || '[]') as PlateImage[];
+    } catch {
+      return; // the server-rendered hero is already on screen; leave it alone
+    }
+    if (!plates.length) return;
+
+    const strip = document.querySelector<HTMLElement>('[data-strip]');
+    const thumbs = strip
+      ? Array.from(strip.querySelectorAll<HTMLButtonElement>('[data-plate]'))
+      : [];
+
+    const viewer = createPlateViewer({
+      frame,
+      front,
+      back,
+      stage: frame.querySelector<HTMLElement>('[data-stage]'),
+      prev: frame.querySelector<HTMLElement>('[data-plate-step="-1"]'),
+      next: frame.querySelector<HTMLElement>('[data-plate-step="1"]'),
+      count: frame.querySelector<HTMLElement>('[data-count]'),
+      zoom: frame.querySelector<HTMLElement>('[data-plate-zoom]'),
+      original: frame.querySelector<HTMLAnchorElement>('[data-plate-original]'),
+      live: frame.querySelector<HTMLElement>('[data-live]'),
+      onShow: (i) => {
+        thumbs.forEach((t, j) => {
+          if (j === i) t.setAttribute('aria-current', 'true');
+          else t.removeAttribute('aria-current');
+        });
+      },
+    });
+
+    viewer.set(plates, frame.dataset.alt || '');
+    current = viewer;
+
+    frame.addEventListener('click', (e) => {
+      const nav = (e.target as Element | null)?.closest<HTMLElement>('[data-plate-step]');
+      if (!nav) return;
+      viewer.step(Number(nav.dataset.plateStep) || 0);
+    });
+
+    strip?.addEventListener('click', (e) => {
+      const btn = (e.target as Element | null)?.closest<HTMLElement>('[data-plate]');
+      if (!btn) return;
+      viewer.goTo(Number(btn.dataset.plate));
+    });
+
+    /* Left/Right page the hero; +/- zoom it; Esc fits it back into the mat.
+       The overlay owns all of these whenever it is up — it never is on this
+       page, but ask before assuming.
+
+       Capture phase, and only for Esc: the compass takes Esc as "go back", and
+       the first press has to mean "out of the photograph" instead. Every other
+       key here is one the compass ignores. */
+    if (!keysWired) {
+      keysWired = true;
+      document.addEventListener(
+        'keydown',
+        (e) => {
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+          const el = document.activeElement as HTMLElement | null;
+          if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+          const panel = (window as unknown as { birdPanel?: { isPanelOpen?: () => boolean } }).birdPanel;
+          if (panel?.isPanelOpen?.()) return;
+          if (!current) return;
+
+          if (e.key === 'Escape') {
+            if (!current.zoomed()) return; // nothing to unwind; let it go back
+            e.preventDefault();
+            e.stopPropagation();
+            current.resetZoom();
+            return;
+          }
+
+          if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_') {
+            if (!current.canZoom()) return;
+            e.preventDefault();
+            e.stopPropagation();
+            current.zoomBy(e.key === '-' || e.key === '_' ? 1 / 1.6 : 1.6);
+            return;
+          }
+
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+          if (e.shiftKey) return;
+          if (current.count() < 2) return;
+          e.preventDefault();
+          current.step(e.key === 'ArrowLeft' ? -1 : 1);
+        },
+        true,
+      );
+    }
+  }
+
+  setup();
+  document.addEventListener('astro:page-load', setup);
+</script>
+
+<style>
+  /* ---- head ---- */
+
+  .bird__head { max-width: 46ch; }
+
+  .bird__crumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6em;
+    margin-bottom: 1.1rem;
+  }
+  .bird__crumbs a {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+  .bird__crumbs a:hover { color: var(--ink-soft); border-bottom-color: var(--rule); }
+
+  .bird__name {
+    margin: 0;
+    font-size: var(--fs-name);
+    font-weight: 400;
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+
+  .bird__sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.2em 1em;
+    margin: 0.5rem 0 0;
+  }
+
+  .bird__genus {
+    font-family: var(--serif);
+    font-size: var(--fs-body);
+  }
+
+  /* The gloss on the subtitle line — the narrow-screen home of the
+     inscription, and the permanent home of the one Latin gloss. It is no
+     longer a grey sans afterthought: same CJK serif as the inscription, same
+     --ink-soft, at running-text size beside the binomial. */
+  .bird__gloss {
+    font-family: var(--serif-cjk);
+    font-size: var(--fs-body);
+    letter-spacing: 0.1em;
+    color: var(--ink-soft);
+  }
+  .bird__gloss[data-latin] {
+    font-family: var(--serif);
+    font-style: italic;
+    letter-spacing: 0;
+  }
+
+  /* ---- body ---- */
+
+  .bird__body {
+    display: grid;
+    gap: clamp(30px, 5vw, 64px);
+    padding: 0 var(--gutter);
+  }
+
+  .bird__plates,
+  .bird__column,
+  .bird__facts { min-width: 0; }
+
+  /* ---- the inscription ----
+
+     A Chinese bird painting sets the bird's name beside the picture, running
+     down the margin, in a Song-style serif. Every plate on this site has such
+     a name and it had been sitting under the English one at 11px in grey
+     sans; here it becomes the second voice it is.
+
+     The column is exactly 1em wide by construction (upright glyphs are square
+     and `nowrap` keeps them in one file), so the whole thing costs 28px plus
+     the gap and the facts column beside it does not move. A four-character
+     name is 112px tall and the two seven-character ones are 196px, both well
+     inside the 300px floor of the frame's own clamp.
+
+     It only exists when there is something to inscribe — 41 of the 43
+     unphotographed birds have no gloss at all, and for those .bird__plates is
+     left as the plain single column it always was, with no empty track and no
+     dangling gap. That is what `.bird--inscribed` is for. */
+
+  .bird--inscribed .bird__plates {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 18px;
+    align-items: start;
+  }
+
+  .bird--inscribed .bird__column {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .bird__inscription {
+    grid-column: 2;
+    grid-row: 1;
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    /* 28px. Supported unprefixed in Safari since 10.1; a browser that knows
+       neither property simply sets the name horizontally, which is the
+       narrow-screen treatment and is not wrong. */
+    font-family: var(--serif-cjk);
+    font-size: 1.75rem;
+    line-height: 1;
+    /* vertical setting: this is the gap between glyphs, not between letters */
+    letter-spacing: 0.18em;
+    color: var(--ink-soft);
+    /* top-aligned with the mat's top edge, the way an inscription sits on a
+       scroll — the optical correction is for the cap of the first glyph */
+    margin: 0;
+    padding-top: 6px;
+    white-space: nowrap;
+  }
+
+  /* Under 760px there is no margin to stand in, so the name goes back to the
+     subtitle line and the inscription is the thing that does not exist. Only
+     ever one of the two is in the accessibility tree. */
+  @media (max-width: 759.98px) {
+    .bird__inscription { display: none; }
+  }
+  @media (min-width: 760px) {
+    .bird--inscribed .bird__gloss { display: none; }
+  }
+
+  /* ---- the frame ----
+
+     The same mat <BirdPanel /> uses, for the same reason: a bird's frames are
+     all different shapes, so the frame is a fixed height, the photograph is
+     centred in it at its true ratio, --paper-sunk shows through as the mat,
+     and nothing is ever scaled past the pixels we built (--iw / --ih, set by
+     src/lib/plateViewer.ts). Paging from a landscape to a portrait changes the
+     shape of the mat and never the height of the page. */
+
+  .bird__viewer {
+    position: relative;
+    /* stable for a viewport, independent of which photograph is showing */
+    --frame-h: clamp(300px, 56vh, 640px);
+  }
+
+  .bird__plate {
+    display: grid;
+    /* One explicit cell, not an auto row: an auto row is sized by the
+       photograph, which makes the photograph's own max-height circular and
+       lets a tall portrait overflow the frame. */
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center;
+    height: var(--frame-h);
+    margin: 0;
+    overflow: hidden;
+    background: var(--paper-sunk);
+    /* a horizontal drag pages; a vertical one still scrolls the page */
+    touch-action: pan-y;
+  }
+
+  /* The zoom stage: exactly the mat's box, so scaling it about its centre
+     scales the centred photograph about its centre. src/lib/plateViewer.ts
+     writes the transform; nothing else touches it. */
+  .bird__zoom {
+    grid-area: 1 / 1;
+    place-self: stretch;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center;
+    transition: transform 230ms var(--ease);
+  }
+
+  .bird__photo {
+    grid-area: 1 / 1;
+    /* a mouse drag should page, not start a native image drag */
+    user-select: none;
+    -webkit-user-drag: none;
+    width: auto;
+    height: auto;
+    /* never past the pixels we built, never past the frame */
+    max-width: min(100%, var(--iw, 100%));
+    max-height: min(100%, var(--ih, 100%));
+    opacity: 0;
+    transform: translateX(calc(var(--dir, 0) * 18px));
+    transition: opacity 190ms var(--ease), transform 300ms var(--ease);
+  }
+  .bird__photo[hidden] { display: none; }
+  /* the server renders the first plate already front, so it is visible with
+     no JavaScript at all */
+  .bird__photo.is-front { opacity: 1; transform: none; }
+
+  /* ---- paging ---- */
+
+  .bird__page {
+    position: absolute;
+    top: 50%;
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 58px;
+    padding: 0;
+    color: var(--ink);
+    background: var(--paper);
+    border: 0;
+    border-radius: 2px;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(-50%);
+    transition: opacity var(--dur) var(--ease);
+  }
+  .bird__page--prev { left: 10px; }
+  .bird__page--next { right: 10px; }
+
+  /* Quiet until you look at it. */
+  .bird__viewer:hover .bird__page,
+  .bird__viewer:focus-within .bird__page { opacity: 0.66; }
+  .bird__viewer .bird__page:hover,
+  .bird__viewer .bird__page:focus-visible { opacity: 0.94; }
+
+  /* Touch has no hover, so the arrows sit there, fainter. */
+  @media (hover: none) {
+    .bird__page,
+    .bird__viewer:hover .bird__page { opacity: 0.58; }
+  }
+
+  .bird__count {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    margin: 0;
+    padding: 0.18em 0.55em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-label);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-soft);
+    background: var(--paper);
+    border-radius: 2px;
+    opacity: 0.74;
+    pointer-events: none;
+  }
+
+  /* ---- zoom ---- */
+
+  /* Mirrors the counter, bottom-left. Quiet until you look at the plate.
+     One row, so the link cannot cover the magnifier and neither can reach the
+     counter opposite. Each child hides with [hidden], so the row closes up
+     rather than leaving a gap. */
+  .bird__tools {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .bird__zoombtn {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    color: var(--ink-soft);
+    background: var(--paper);
+    border: 0;
+    border-radius: 2px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .bird__zoombtn[hidden] { display: none; }
+  .bird__viewer:hover .bird__zoombtn,
+  .bird__viewer:focus-within .bird__zoombtn { opacity: 0.74; }
+  .bird__zoombtn:hover,
+  .bird__zoombtn:focus-visible { opacity: 0.96; color: var(--ink); }
+  .bird__zoombtn[aria-pressed='true'] { opacity: 0.9; }
+  /* the magnifier loses its upright stroke and becomes a minus */
+  .bird__zoombtn[aria-pressed='true'] .bird__zoomplus { display: none; }
+
+  @media (hover: none) {
+    .bird__zoombtn,
+    .bird__viewer:hover .bird__zoombtn { opacity: 0.62; }
+  }
+
+  /* ---- the original ---- */
+
+  /* Set like the counter it faces across the frame, and like .panel__orig in
+     BirdPanel.astro — the same control in the same corner of the same mat. */
+  .bird__orig {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    height: 34px;
+    padding: 0 0.7em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-label);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-soft);
+    background: var(--paper);
+    border-radius: 2px;
+    text-decoration: none;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .bird__orig[hidden] { display: none; }
+  .bird__viewer:hover .bird__orig,
+  .bird__viewer:focus-within .bird__orig { opacity: 0.74; }
+  .bird__orig:hover,
+  .bird__orig:focus-visible { opacity: 0.96; color: var(--ink); }
+
+  /* the one mark that says "this leaves the page" */
+  .bird__origout { opacity: 0.7; }
+
+  @media (hover: none) {
+    .bird__orig,
+    .bird__viewer:hover .bird__orig { opacity: 0.62; }
+  }
+
+  .bird__viewer[data-zoomable] .bird__plate { cursor: zoom-in; }
+  .bird__viewer[data-zoomed] .bird__plate {
+    cursor: grab;
+    /* while zoomed the drag is a pan in both axes, so the browser must not
+       claim the vertical one for scrolling the page */
+    touch-action: none;
+  }
+  .bird__viewer[data-zoomed] .bird__plate:active { cursor: grabbing; }
+
+  /* ---- the contact strip ---- */
+
+  .bird__strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: clamp(6px, 0.9vw, 12px);
+    margin-top: clamp(6px, 0.9vw, 12px);
+  }
+
+  .bird__frame {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 0;
+    font: inherit;
+    background: var(--paper-sunk);
+    border: 0;
+    cursor: pointer;
+    appearance: none;
+  }
+  .bird__frame img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    object-position: 50% 42%;
+    opacity: 0.72;
+    transition: opacity var(--dur-fast) var(--ease);
+  }
+  .bird__frame:hover img,
+  .bird__frame:focus-visible img { opacity: 1; }
+
+  /* the frame you are looking at, marked in this bird's type colour */
+  .bird__frame[aria-current] img { opacity: 1; }
+  .bird__frame[aria-current]::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    box-shadow: inset 0 0 0 2px var(--t);
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bird__photo {
+      transition: none;
+      transform: none;
+    }
+    /* zoom still works; it just arrives rather than travels */
+    .bird__zoom { transition: none; }
+  }
+
+  .bird__platefoot {
+    margin: 1em 0 0;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  /* ---- words ---- */
+
+  .bird__desc {
+    margin: 0 0 2em;
+    max-width: 46ch;
+    font-size: var(--fs-body);
+    line-height: 1.6;
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+
+  .bird__where,
+  .bird__marklist {
+    display: grid;
+    grid-template-columns: minmax(7.5em, max-content) minmax(0, 1fr);
+    gap: 0.55em 1.6em;
+    margin: 0;
+    max-width: 46ch;
+  }
+
+  .bird__where dt,
+  .bird__marklist dt {
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-top: 0.25em;
+  }
+
+  .bird__where dd,
+  .bird__marklist dd {
+    margin: 0;
+    font-size: var(--fs-base);
+    color: var(--ink);
+  }
+
+  .bird__places {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2em 1em;
+  }
+
+  .bird__place,
+  .bird__grouplink,
+  .bird__tag,
+  .bird__daylink {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+    transition: border-color var(--dur-fast) var(--ease);
+  }
+  .bird__place:hover,
+  .bird__grouplink:hover,
+  .bird__tag:hover { border-bottom-color: var(--t); }
+
+  /* The date goes to the day, and wears the overlay's hover rather than the
+     places' — .panel__date[href] in BirdPanel.astro dims to --ink-soft, and
+     the two dates on this record should not behave differently. */
+  .bird__daylink { transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+  .bird__daylink:hover {
+    color: var(--ink-soft);
+    border-bottom-color: var(--ink-soft);
+  }
+
+  .bird__marks,
+  .bird__tags { margin-top: 2.4em; }
+
+  .bird__markshead {
+    max-width: 46ch;
+    margin: 0 0 1.1em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    font-weight: 400;
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .bird__markshead::after {
+    content: '';
+    display: block;
+    height: 1px;
+    margin-top: 0.9em;
+    background: var(--rule-soft);
+  }
+
+  .bird__taglist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35em 1.1em;
+    margin: 0;
+    max-width: 46ch;
+    font-size: var(--fs-base);
+  }
+
+  .bird__thin {
+    margin: 2.4em 0 0;
+    max-width: 44ch;
+    font-size: var(--fs-small);
+    color: var(--ink-faint);
+  }
+
+  .bird__twin {
+    margin: 2.4em 0 0;
+    max-width: 44ch;
+    font-size: var(--fs-small);
+    color: var(--ink-faint);
+  }
+  .bird__twin a { color: var(--ink-soft); }
+
+  /* ---- foot ---- */
+
+  .bird__nav {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: baseline;
+    gap: 1em 1.5em;
+    padding: clamp(40px, 8vh, 88px) var(--gutter) 0;
+    margin-top: clamp(40px, 8vh, 88px);
+    border-top: 1px solid var(--rule-soft);
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .bird__nav a {
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .bird__nav a:hover { color: var(--ink); }
+  .bird__navside { min-width: 0; }
+  .bird__navside--end { text-align: right; }
+  .bird__nav a.bird__navup { color: var(--ink-faint); }
+  .bird__nav a.bird__navup:hover { color: var(--ink-soft); }
+
+  @media (min-width: 880px) {
+    .bird__body {
+      grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.85fr);
+      align-items: start;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .bird__nav {
+      grid-template-columns: 1fr;
+      text-align: left;
+    }
+    .bird__navside--end { text-align: left; }
+  }
+</style>

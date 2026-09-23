@@ -1,0 +1,262 @@
+---
+/**
+ * Every page starts here.
+ *
+ *   <Base title="When · Birding Checklist" description="…">
+ *     …your view…
+ *   </Base>
+ *
+ * You get: the shared stylesheet, the compass (the site's only navigation),
+ * the `<main id="main">` landmark with its skip link, and Astro's View
+ * Transitions, so a bird can glide from one view to the next. See
+ * src/lib/README.md for the view-transition naming rules.
+ *
+ * Your view is rendered inside <main>, so don't add a <main> of your own.
+ *
+ * It also puts the page's whole outward face in the <head> — the icons, the
+ * Open Graph and Twitter card, the canonical link. Your view does not have
+ * to do anything for that beyond the `title` and `description` it already
+ * passes; see "the card" below for how the picture is found.
+ */
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { ClientRouter } from 'astro:transitions';
+import '../styles/global.css';
+import Compass from '../components/Compass.astro';
+import { stripBase, withBase } from '../lib/paths';
+
+interface Props {
+  title: string;
+  description?: string;
+  /** Extra class on <body>, if a view needs a page-level hook. */
+  bodyClass?: string;
+  /**
+   * Override the social card, as a site-root path ("/og/…jpg"). Nothing
+   * passes this — the card is found from the route — but a view that wants
+   * to point somewhere else can.
+   */
+  card?: string;
+}
+
+const {
+  title,
+  description = 'A birding checklist, kept as a gallery.',
+  bodyClass,
+  card,
+} = Astro.props;
+
+const SITE_NAME = 'Birding Checklist';
+
+/* ------------------------------------------------------------------ origin
+ *
+ * `site: 'https://yy-gx.github.io'` in astro.config.mjs, so the canonical
+ * link, og:url and the two image URLs come out absolute. Without it (a
+ * checkout with no `site`, or SITE_URL unset) they fall back to the path
+ * they were handed, which every scraper worth the name resolves against the
+ * page it fetched, and og:url is left out rather than asserted wrongly — a
+ * canonical pointing at localhost is worse than no canonical at all.
+ *
+ * `abs()` takes a **real** path, base and all. `Astro.url.pathname` already
+ * is one; a site-root path such as `/og/home.jpg` has to go through
+ * `withBase()` on the way in, or the card lands at yy-gx.github.io/og/… and
+ * 404s in somebody's chat window.
+ */
+const origin: URL | undefined =
+  Astro.site ?? (import.meta.env.SITE_URL ? new URL(import.meta.env.SITE_URL) : undefined);
+const abs = (path: string) => (origin ? new URL(path, origin).href : path);
+
+/* ------------------------------------------------------------------ the card
+ *
+ * scripts/og-cards.mjs draws one 1200×630 card per route and writes it to
+ * public/og/ on the route's own path — `/birds/brown-creeper` becomes
+ * `public/og/birds/brown-creeper.jpg`, and `/` becomes `home.jpg`. So there
+ * is no manifest to keep in step with anything: the path is the route, and
+ * the existence check below is what catches a card that was never drawn
+ * (a new route, or a build on a machine that skipped the generator). Those
+ * fall back to the site card rather than to a 404 in somebody's chat window.
+ */
+const OG_W = 1200;
+const OG_H = 630;
+/** Where a site-root path lands in public/, so we can ask whether it is there. */
+const onDisk = (path: string) =>
+  fileURLToPath(new URL(`../../public${path}`, import.meta.url));
+
+/* The site-root route, base stripped off: the cards are named for the route
+   the site *has*, not for the directory it happens to be mounted in, so
+   `/flock/birds/blue-jay` has to come back to `/birds/blue-jay` before it
+   can be turned into `public/og/birds/blue-jay.jpg`. Left in, every page on
+   the site would look for `public/og/flock/…`, find nothing, and fall back
+   to the home card — 397 identical previews and no error anywhere. */
+const route = stripBase(Astro.url.pathname).replace(/\/+$/, '') || '/';
+const preferred = card ?? `/og/${route === '/' ? 'home' : route.slice(1)}.jpg`;
+const ogImage = existsSync(onDisk(preferred)) ? preferred : '/og/home.jpg';
+
+/* "Brown Creeper · Birding Checklist" -> "Brown Creeper". The suffix is
+   already the og:site_name, and a card that repeats it reads as a filename
+   rather than as the name of a bird. */
+const ogTitle = title.split(' · ')[0] || title;
+/* `Astro.url.pathname` is "/flock" on the home page and "/flock/list/"
+   everywhere else — a canonical that is itself a redirect. Send the home
+   page to the base's own directory URL instead. */
+const canonical = abs(route === '/' ? withBase('/') : Astro.url.pathname);
+/** The card as a URL rather than as a name in public/og. */
+const ogImageUrl = abs(withBase(ogImage));
+
+/* ------------------------------------------------------------------ the season
+ *
+ * B9: the site's accent follows the real date — amber in September, cold blue
+ * in January. Meteorological seasons (Dec-Feb winter), northern hemisphere,
+ * the same mapping as SEASON_OF_MONTH in src/lib/timeline.ts so the accent and
+ * the timeline's bands never disagree about what month it is.
+ *
+ * This value is the *build* month. It is what a visitor with no JavaScript
+ * sees, and what the first paint uses before the inline script below runs; the
+ * script then corrects it to the month the visitor is actually standing in.
+ * A static site is rebuilt often enough that the two are usually the same, and
+ * when they are not, the wrong one is still a season rather than nothing.
+ */
+const seasonOfMonth = (m: number) =>
+  m < 2 || m === 11 ? 'winter' : m < 5 ? 'spring' : m < 8 ? 'summer' : 'autumn';
+const buildSeason = seasonOfMonth(new Date().getMonth());
+---
+
+<!doctype html>
+<html lang="en" data-season={buildSeason}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    <title>{title}</title>
+    <link rel="canonical" href={canonical} />
+
+    <!-- The display face, fetched with the stylesheet rather than after it.
+         It is 8.5KB and every page has exactly one line set in it — the h1 —
+         so `font-display: swap` was swapping a fallback for the real face
+         about 60ms after the first paint, which moved the lede under every
+         title by 6px and, on /groups, re-measured the stage the bubbles are
+         packed into. Preloaded, the first paint is the right one. -->
+    <link
+      rel="preload"
+      href={withBase("/fonts/bodoni-moda-display.woff2")}
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
+    <!-- The mark: a pen gone round a spot and overshot, drawn by the same
+         hand as the maps (scripts/ink.mjs, `siteMark()`). The SVG carries
+         its own prefers-color-scheme rule so the ink lifts off a dark tab
+         strip; the PNGs are the opaque fallback for clients that will not
+         read it. -->
+    <link rel="icon" href={withBase("/favicon.ico")} sizes="32x32" />
+    <link rel="icon" id="favicon-svg" href={withBase(`/favicon-${buildSeason}.svg`)} type="image/svg+xml" />
+    <link rel="icon" href={withBase("/favicon-32.png")} type="image/png" sizes="32x32" />
+    <link rel="icon" href={withBase("/favicon-16.png")} type="image/png" sizes="16x16" />
+    <link rel="apple-touch-icon" href={withBase("/apple-touch-icon.png")} />
+    <meta name="theme-color" content="#faf8f3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#131311" media="(prefers-color-scheme: dark)" />
+
+    <!-- The season the visitor is standing in, which is not always the one the
+         site was built in. `data-season` on <html> is what src/styles/global.css
+         §2b turns into --accent; the icon swap is the same colour in the tab.
+
+         `data-astro-rerun` because ClientRouter re-copies <html>'s attributes
+         and diffs the <head> on every swap, so both would fall back to the
+         build month on the second page without it.
+
+         In head and inline on purpose: it has to land before the first paint,
+         and it is nine lines. Northern hemisphere, meteorological seasons —
+         the same table as SEASON_OF_MONTH in src/lib/timeline.ts.
+
+         It is the one script on the site that cannot `import { withBase }` —
+         inline means no module — so the base is handed to it by `define:vars`
+         instead, already resolved. Still derived, never spelled out. -->
+    <script is:inline data-astro-rerun define:vars={{ base: withBase('/') }}>
+      (function () {
+        var m = new Date().getMonth();
+        var s = m < 2 || m === 11 ? 'winter' : m < 5 ? 'spring' : m < 8 ? 'summer' : 'autumn';
+        document.documentElement.dataset.season = s;
+        var icon = document.getElementById('favicon-svg');
+        var href = base + 'favicon-' + s + '.svg';
+        if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
+      })();
+    </script>
+
+    <!-- What a link to this page looks like when somebody pastes it. -->
+    <meta property="og:type" content={route.startsWith('/birds/') ? 'article' : 'website'} />
+    <meta property="og:site_name" content={SITE_NAME} />
+    <meta property="og:title" content={ogTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:locale" content="en_US" />
+    {origin && <meta property="og:url" content={canonical} />}
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content={String(OG_W)} />
+    <meta property="og:image:height" content={String(OG_H)} />
+    <meta property="og:image:alt" content={`${ogTitle} — a card from ${SITE_NAME}`} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={ogTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageUrl} />
+    <meta name="twitter:image:alt" content={`${ogTitle} — a card from ${SITE_NAME}`} />
+
+    <!-- The flock re-forms instead of the page blinking. Browsers without
+         View Transitions simply navigate; nothing here is load-bearing. -->
+    <ClientRouter />
+  </head>
+  <body class={bodyClass}>
+    <!-- Every view puts its birds in the DOM before its words (58 of them on
+         the home page, 238 on the timeline), so this is the first tab stop
+         and the only quick way to the content and the compass. -->
+    <a class="skip-link" href="#main">Skip to the content</a>
+    <a class="skip-link" href="#compass">Skip to the compass</a>
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+    <Compass />
+
+    <!-- Paper.
+
+         /list prints a 16-page contact sheet and ships 224 of its 236
+         plates `loading="lazy"`; a bird page ships frames 7 and up the same
+         way, and the print block in global.css then forces them opaque
+         whether or not they ever loaded. Chrome force-loads lazy images
+         into a print preview. Safari and Firefox do not reliably, so the
+         sheet could come out as empty frames (AUDIT2 §6.1).
+
+         So: at the first sign of printing, every lazy image on the page
+         turns eager and is asked to decode. `beforeprint` is the hook that
+         exists, but no browser waits for a promise returned from it, so the
+         Cmd/Ctrl+P listener is what actually buys the fetches some time —
+         it fires before the dialog opens, and the dialog itself is a second
+         or two of it. Neither preventsDefault; both are idempotent. The
+         plates are build-cropped to 448px, so this costs bandwidth at the
+         moment somebody asks for paper, and nothing at any other time.
+
+         Inline, in the layout, because it has to be true of every route:
+         the one thing worse than a lazy image is a blank frame in a printed
+         record. Guarded on window because ClientRouter re-runs body scripts
+         on every navigation. -->
+    <script is:inline>
+      (function () {
+        if (window.__printWarm) return;
+        window.__printWarm = true;
+        var warm = function () {
+          var imgs = document.querySelectorAll('img[loading="lazy"]');
+          for (var i = 0; i < imgs.length; i++) {
+            imgs[i].loading = 'eager';
+            if ('fetchPriority' in imgs[i]) imgs[i].fetchPriority = 'high';
+            if (imgs[i].decode) imgs[i].decode().catch(function () {});
+          }
+        };
+        window.addEventListener('beforeprint', warm);
+        var mq = window.matchMedia('print');
+        if (mq.addEventListener) mq.addEventListener('change', function (e) { if (e.matches) warm(); });
+        window.addEventListener('keydown', function (e) {
+          if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'P')) warm();
+        });
+      })();
+    </script>
+  </body>
+</html>

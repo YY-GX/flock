@@ -1,0 +1,314 @@
+---
+/**
+ * One day out — a chapter of the record.
+ *
+ * Sixty-four of these, one per distinct `firstSpotted` date. Arriving from
+ * the ledger, the row's twelve named thumbs glide into the grid and the rest
+ * bloom in behind them; arriving cold it is an ordinary page: a map of the
+ * places the day can be proved to have happened at, and every bird found
+ * that day laid out beside it.
+ *
+ * WHAT A DAY MAY NOT SAY (DESIGN2 §1.5, and please do not add it later):
+ *   - the order the birds were found in. There is no time of day anywhere
+ *     in this data, so the grid is in field-guide order and says so.
+ *   - which of a multi-place bird's places it was at *that* day. The map
+ *     lights all of them on hover, which is the honest answer.
+ *   - birds seen again with nothing new. Invisible in this data; the lede
+ *     therefore always says "new birds".
+ *   - a place, on the 14 days that cannot be placed. Those pages have no
+ *     map at all — a column of paper and a count is the truth about them.
+ */
+import Base from '../../layouts/Base.astro';
+import BirdPanel from '../../components/BirdPanel.astro';
+import DayGrid from '../../components/DayGrid.astro';
+import MapStage from '../../components/MapStage.astro';
+import { formatDate } from '../../lib/flock';
+import { placesIn, placeById, type PlaceView } from '../../lib/mapView';
+import { days, dayByIso, daySummary, newBirds } from '../../lib/days';
+import { withBase } from '../../lib/paths';
+
+export function getStaticPaths() {
+  return days.map((day) => ({ params: { iso: day.iso } }));
+}
+
+const { iso } = Astro.params;
+const day = dayByIso.get(iso!)!;
+
+/* The map is of the space the day's *certain* places live in. A day with no
+   provable place gets no map: there is nothing to draw and a blank US map
+   would imply the record knows more than it does. */
+const pins = day.placeIds
+  .map((id) => placeById.get(id))
+  .filter((p): p is PlaceView => Boolean(p));
+const space = pins.length ? (pins.some((p) => p.space === 'us') ? 'us' : 'triangle') : null;
+const activeSlugs = pins.filter((p) => p.space === space).map((p) => p.slug);
+
+const run = day.run;
+/* "Colorado, day 1 of 4" when the day is inside a trip; otherwise the
+   coarsest true thing — the home patch, the road, or just a day out. The 14
+   unplaceable days get the last of those and no more. */
+const eyebrowWhere = run
+  ? `${run.region}, day ${day.runIndex} of ${run.dayCount}`
+  : day.placeIds.length && !day.travel
+    ? 'around home'
+    : day.scope || 'a day out';
+
+/* The second line of the lede. A trip day says where it sits in the trip; a
+   one-bird day the data cannot place says the one honest thing there is to
+   say about a Canada Goose — that it turns up everywhere. */
+const shared = day.count === 1 ? (day.birds[0]?.locationIds ?? []).length : 0;
+const note = run
+  ? `${day.runIndex === 1 ? 'The first day' : day.runIndex === run.dayCount ? 'The last day' : `Day ${day.runIndex}`} of ${run.length} · ${newBirds(run.count)} in all`
+  : day.certainty === 'none' && shared > 1
+    ? `Seen at ${shared} places since — which is why this day cannot be placed`
+    : '';
+
+const multi = day.birds.filter((b) => (b.locationIds ?? []).length > 1).length;
+---
+
+<Base title={`${formatDate(day.iso)} · Birding Checklist`} description={daySummary(day)}>
+  <section class:list={['page', 'day', day.count <= 3 && 'day--few', !space && 'day--noplace']}>
+    <header class="page__head">
+      <p class="eyebrow">
+        <a class="day__up" href={withBase("/days")}>Days</a> · {eyebrowWhere}
+      </p>
+      <h1 class="display">{formatDate(day.iso)}</h1>
+      <p class="lede">
+        <i class="season-dot" style={`--s: var(--season-${day.season})`} aria-hidden="true"></i>
+        {newBirds(day.count)}{day.where ? ` · ${day.where}` : ''}
+        {note && <span class="day__note">{note}</span>}
+      </p>
+    </header>
+
+    <div class="day__body">
+      {space && (
+        <div class="day__map">
+          <MapStage space={space} places={placesIn(space)} activeSlugs={activeSlugs} />
+          <div class="day__foot">
+            <p class="map-else" data-map-else hidden></p>
+            {/* A phone cannot hover, so it is told the fact rather than a
+                gesture it has no way to make (AUDIT2 §5.2). */}
+            <p class="day__hint">
+              {multi > 0 ? (
+                <>
+                  <span class="hint--hover">Hover a bird: {multi} of these were seen
+                    {' '}somewhere else too, and those pins light up.</span>
+                  <span class="hint--flat">{multi} of these were seen somewhere else too.</span>
+                </>
+              ) : (
+                <span class="hint--hover">Hover a bird to find it on the map.</span>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div class="day__grid">
+        <p class="day__order meta">By family — the data keeps no time of day</p>
+        <DayGrid birds={day.birds} space={space} />
+
+        <nav class="chapter" aria-label="The days either side">
+          {day.prev ? (
+            <a class="chapter__cell chapter__cell--prev" href={withBase(`/days/${day.prev.iso}`)} rel="prev" data-day-prev>
+              <span class="chapter__arrow" aria-hidden="true">←</span>
+              <span class="chapter__date">{formatDate(day.prev.iso)}</span>
+              <span class="chapter__count">{newBirds(day.prev.count)}</span>
+            </a>
+          ) : (
+            <span class="chapter__cell chapter__cell--empty">the first day out</span>
+          )}
+          {day.next ? (
+            <a class="chapter__cell chapter__cell--next" href={withBase(`/days/${day.next.iso}`)} rel="next" data-day-next>
+              <span class="chapter__date">{formatDate(day.next.iso)}</span>
+              <span class="chapter__count">{newBirds(day.next.count)}</span>
+              <span class="chapter__arrow" aria-hidden="true">→</span>
+            </a>
+          ) : (
+            <span class="chapter__cell chapter__cell--empty">the last day so far</span>
+          )}
+        </nav>
+        <p class="sr-only">Press comma for the previous day and full stop for the next.</p>
+      </div>
+    </div>
+  </section>
+
+  <BirdPanel birds={day.birds} />
+</Base>
+
+<script>
+  /*
+   * Comma and full stop turn the page. Both are outside M T G L, both are
+   * refused while the bird panel owns the keyboard, and both go through the
+   * page's own prev/next links rather than a second copy of the date list —
+   * so the keys can never disagree with what is written on the screen.
+   *
+   * One listener for the life of the document: the links are looked up at
+   * press time, so client-side navigation needs no re-binding.
+   */
+  import { isPanelOpen } from '../../lib/panel';
+
+  function typing(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+    return /^(input|textarea|select)$/i.test(target.tagName);
+  }
+
+  async function go(href: string) {
+    try {
+      const { navigate } = await import('astro:transitions/client');
+      navigate(href);
+    } catch {
+      location.assign(href);
+    }
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (typing(e.target) || isPanelOpen()) return;
+    if (e.key !== ',' && e.key !== '.') return;
+
+    const sel = e.key === ',' ? '[data-day-prev]' : '[data-day-next]';
+    const link = document.querySelector<HTMLAnchorElement>(sel);
+    if (!link) return;
+    e.preventDefault();
+    void go(link.getAttribute('href') as string);
+  }
+
+  const w = window as unknown as { __dayKeysWired?: boolean };
+  if (!w.__dayKeysWired) {
+    w.__dayKeysWired = true;
+    document.addEventListener('keydown', onKey);
+  }
+</script>
+
+<style>
+  .day__up {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+  }
+  .day__up:hover { border-bottom-color: var(--ink-soft); }
+
+  .day__note {
+    display: block;
+    font-size: var(--fs-small);
+    color: var(--ink-faint);
+  }
+
+  .day__body {
+    display: grid;
+    gap: clamp(28px, 4vw, 56px);
+    padding: 0 var(--gutter);
+  }
+
+  .day__map { min-width: 0; }
+
+  /*
+   * A place page has exactly one active pin, so MapStage shows its label
+   * permanently. A day can have two — three of the four Colorado days do,
+   * and Denver and Colorado Springs are 60 miles apart, which on this map
+   * is 14px — and two permanent labels at that distance sit on top of each
+   * other. The lede already names both places in words, so here the ink
+   * ring alone says "here" and the label waits to be asked for. A lit pin
+   * (the signature hover) keeps its label either way.
+   */
+  .day__map :global(.map-pin.is-active:not(.is-lit):not(:hover):not(:focus-visible) .map-pin__label) {
+    opacity: 0;
+  }
+  .day__grid { min-width: 0; }
+  .day__foot { min-width: 0; }
+
+  .day__order {
+    margin: 0 0 1.4em;
+    color: var(--ink-faint);
+  }
+
+  .map-else,
+  /* see /places/<slug>: the gesture half of the hint, and its twin for a
+     pointer that cannot hover */
+  .hint--hover { display: none; }
+  .hint--flat { display: inline; }
+  @media (hover: hover) {
+    .hint--hover { display: inline; }
+    .hint--flat { display: none; }
+  }
+
+  .day__hint {
+    margin: 0.9em 0 0;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+    color: var(--ink-faint);
+  }
+  .map-else { color: var(--ink-soft); }
+
+  /* --- turning the page ------------------------------------------------ */
+
+  .chapter {
+    display: flex;
+    justify-content: space-between;
+    gap: clamp(16px, 4vw, 48px);
+    margin-top: clamp(40px, 7vh, 80px);
+    padding-top: 1.1em;
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  .chapter__cell {
+    display: flex;
+    align-items: baseline;
+    gap: 0.55em;
+    flex-wrap: wrap;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    text-decoration: none;
+  }
+  .chapter__cell--next { margin-left: auto; text-align: right; }
+  .chapter__cell--empty { font-style: italic; letter-spacing: 0.04em; }
+
+  .chapter__date {
+    font-family: var(--serif);
+    font-size: var(--fs-base);
+    letter-spacing: 0;
+    color: var(--ink);
+  }
+  .chapter__arrow { color: var(--ink-soft); }
+
+  a.chapter__cell:hover .chapter__date { border-bottom: 1px solid var(--ink-soft); }
+  a.chapter__cell:hover .chapter__arrow { color: var(--ink); }
+
+  @media (min-width: 900px) {
+    .day__body {
+      grid-template-columns: minmax(300px, 38%) minmax(0, 1fr);
+      align-items: start;
+    }
+    .day__map {
+      position: sticky;
+      top: clamp(16px, 4vh, 48px);
+    }
+
+    /* A sticky column sets its own children down, so it owes the compass
+       its corner (lib/README §9): the map's footnotes are the only part of
+       this column that reaches the bottom of the window, and they step
+       inboard by the compass reserve rather than sit underneath it. The
+       same rule as places/[slug].astro, deliberately identical. */
+    .day__foot { margin-left: var(--compass-safe); }
+
+    /* 19 of the 64 days are one bird and 27 are two to four: half this
+       route is a very short page, and a short day should look deliberate
+       rather than half-loaded. Both columns shrink to what they hold and
+       the pair centres — the same rule places/[slug].astro uses for a
+       place with three birds, so the two routes read as one book. */
+    .day--few .day__body {
+      grid-template-columns: minmax(280px, 34%) minmax(0, max-content);
+      justify-content: center;
+    }
+    .day--few :global(.bloom) { grid-template-columns: repeat(auto-fill, 132px); }
+
+    /* A day the data cannot place has no map, so there is no pair to
+       centre: it is one column of paper. This must win over --few. */
+    .day--noplace .day__body { grid-template-columns: minmax(0, 1fr); max-width: 72ch; }
+  }
+</style>

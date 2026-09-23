@@ -1,0 +1,168 @@
+---
+/**
+ * The bloom: every bird seen at one place, in the order they were first
+ * spotted, so the list reads like a trip report.
+ *
+ * Each tile carries the slugs of every place that bird was recorded at —
+ * that is what MapStage's script reads to light the other pins up.
+ * Birds with no photograph render as hollow frames (BirdThumb does it).
+ *
+ * TODO C5 — the glow stops at the map's edge, and the tile says so.
+ *
+ * A pin only exists on the map it belongs to, so from a Triangle place page
+ * a bird's US pins cannot light. 298 of the 584 tiles on the 37 place pages
+ * are in that position; the worst of them (Northern Mockingbird at
+ * Wilmington) has ten places on the other sheet. Until now the only sign of
+ * any of it was a line in the map's footer that appeared on hover — which
+ * meant you could not see, while scanning a grid, which birds had a history
+ * off this map, and could not follow it anywhere when you did.
+ *
+ * So the tile carries the fact itself: its place count gets a ↗ and becomes
+ * a link to the bird's own page, the one place that lists all of them, each
+ * a link back to a place. Only the cross-map tiles get it — where the glow
+ * can reach, the map is the answer and a second affordance would be noise.
+ * The count of them, and what the arrow means, is spelled out once in the
+ * hint under the map.
+ */
+import BirdThumb from './BirdThumb.astro';
+import { formatDate, splitName, typeKey } from '../lib/flock';
+import { placeSlugsOf, placeBySlug, type PlaceView } from '../lib/mapView';
+import { withBase } from '../lib/paths';
+
+interface Props {
+  place: PlaceView;
+  /** birds also seen off this map get named instead of glowing */
+  space: 'us' | 'triangle';
+}
+
+const { place, space } = Astro.props;
+
+/* What the other sheet is called, from this one. The footer line and the
+   tiles' labels both say it, so a reader is never told "the other map" and
+   left to work out which. */
+const otherMap = space === 'triangle' ? 'the US map' : 'the home patch';
+
+const tiles = place.birds.map((bird) => {
+  const slugs = placeSlugsOf(bird);
+  const elsewhere = slugs
+    .map((s) => placeBySlug.get(s))
+    .filter((p): p is PlaceView => Boolean(p) && p!.space !== space)
+    .map((p) => p.name);
+  return { bird, slugs, elsewhere };
+});
+---
+
+<ol class="bloom" data-bloom>
+  {tiles.map(({ bird, slugs, elsewhere }, i) => (
+    <li
+      class="bloom__item"
+      style={`--i:${Math.min(i, 26)}`}
+      data-locs={slugs.join(' ')}
+      data-tkey={typeKey(bird.type)}
+      data-else={elsewhere.length ? elsewhere.join(' · ') : undefined}
+      data-elsemap={elsewhere.length ? otherMap : undefined}
+    >
+      <BirdThumb bird={bird} size={132} style="--thumb:100%" />
+      <span class="bloom__meta">
+        <span class="bloom__date">{formatDate(bird.firstSpotted) || 'not dated'}</span>
+        {slugs.length > 1 && (
+          elsewhere.length ? (
+            /* The door. aria-label rather than the visible text, because
+               "13 places ↗" is the right four characters to look at and the
+               wrong nine words to hear. */
+            <a
+              class="bloom__count bloom__count--away"
+              href={withBase(`/birds/${bird.slug}`)}
+              aria-label={`${splitName(bird.name).english}: ${slugs.length} places, ${elsewhere.length} of them on ${otherMap}`}
+            >{slugs.length} places<span class="bloom__away" aria-hidden="true">↗</span></a>
+          ) : (
+            <span class="bloom__count">{slugs.length} places</span>
+          )
+        )}
+      </span>
+    </li>
+  ))}
+</ol>
+
+{!tiles.length && <p class="lede">No birds recorded here yet.</p>}
+
+<style>
+  .bloom {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: clamp(18px, 2.4vw, 34px) clamp(14px, 1.8vw, 26px);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .bloom__item {
+    /* the birds fly out of the pin and settle into the grid */
+    animation: bloom-in 520ms var(--ease) both;
+    animation-delay: calc(var(--i) * 26ms);
+  }
+
+  @keyframes bloom-in {
+    from {
+      opacity: 0;
+      transform: translateY(22px) scale(0.86);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .bloom__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 0.6em;
+    padding-top: 0.15em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+    /* always two lines of room, whether or not the place count wraps onto
+       the second one: a grid of squares should not go ragged over a chip */
+    min-height: 3em;
+    align-content: start;
+    color: var(--ink-faint);
+  }
+  .bloom__count { color: var(--ink-soft); }
+
+  .bloom__item:hover .bloom__count,
+  .bloom__item:focus-within .bloom__count { color: var(--ink); }
+
+  /* the cross-map door (TODO C5). The site's one link idiom — a --rule
+     hairline under the words, darkening on hover — so it reads as a link
+     and not as a second button competing with the plate above it. */
+  a.bloom__count {
+    color: var(--ink-soft);
+    /* text-decoration, not the border-bottom the rest of the site's links
+       use: a border is a box and adds a pixel to the row, and this chip
+       sits in a grid of 45 tiles whose meta line is held to exactly two
+       lines. Measured the same 1 px hairline, at no cost to the layout. */
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.3em;
+    text-decoration-color: var(--rule);
+  }
+  a.bloom__count:hover,
+  a.bloom__count:focus-visible { color: var(--ink); text-decoration-color: var(--ink-soft); }
+
+  /* The arrow is the part that is doing the work: it is the only mark in
+     the grid that says "this bird's story continues off this sheet". Kept
+     tight against the count and a shade lighter, so a scan reads the row
+     of arrows without the counts shouting. */
+  .bloom__away {
+    padding-left: 0.28em;
+    font-family: var(--sans);
+    color: var(--ink-faint);
+  }
+  a.bloom__count:hover .bloom__away,
+  a.bloom__count:focus-visible .bloom__away { color: inherit; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bloom__item { animation: none; }
+  }
+</style>

@@ -1,0 +1,466 @@
+---
+/**
+ * One bird, as a picture with its name. The shared unit of the flock.
+ *
+ *   <BirdThumb bird={bird} />                       160px square, opens the panel
+ *   <BirdThumb bird={bird} size={72} shape="circle" name={false} />   a map pin
+ *   <BirdThumb bird={bird} size={240} genus />      a plate in the life list
+ *   <BirdThumb bird={bird} href={`/birds/${bird.slug}`} />            a link instead
+ *
+ * Behaviour you get for free:
+ *   - the image is built to 2x `size` as WebP and lazy-loaded
+ *   - a fixed-ratio plate (square / circle / portrait) is **cropped at build
+ *     time** to the exact box, aimed at the bird from src/data/focal.json
+ *     (`npm run focal`); `free` keeps the photograph's own ratio
+ *   - 45 of the 281 cards have no photograph on disk — the 43 nobody has
+ *     seen, plus two spotted birds whose photo row is empty. This component
+ *     keys on `firstPhotoFile`, not on `spotted`, so all 45 render as a
+ *     hollow frame rather than a gap (which is why /list shows 45 empty
+ *     frames while its ghost wall holds 43)
+ *   - clicking opens <BirdPanel /> (needs that panel on the page), and the
+ *     cursor says so before the click: zoom-in for a thumb that opens the
+ *     overlay, the ordinary hand plus an underlined caption for one given
+ *     an `href` (TODO C7 — see the note over the cursor rules below)
+ *   - it carries view-transition-name: bird-<slug>, so the same bird glides
+ *     from one view to the next
+ *
+ * See src/lib/README.md for the full contract.
+ */
+import { getImage } from 'astro:assets';
+import type { Bird } from '../lib/types';
+import { firstPhotoFile } from '../lib/data';
+import { photoAsset } from '../lib/images';
+import { birdTransitionName, splitName, typeVar } from '../lib/flock';
+import focalData from '../data/focal.json';
+
+/*
+ * Where the bird is in each photograph — `npm run focal` writes this
+ * (scripts/focal-points.mjs). Keyed by file name; photos.json and disk
+ * sometimes disagree on .jpg/.png, so fall back to the stem. A file with no
+ * entry gets the old default crop, centred and biased a little high.
+ */
+type Focal = { x: number; y: number; w?: number; h?: number };
+const focalByName = focalData as Record<string, Focal>;
+const focalByStem = new Map<string, Focal>();
+for (const [name, entry] of Object.entries(focalByName)) {
+  const stem = name.replace(/\.[^.]+$/, '');
+  if (!focalByStem.has(stem)) focalByStem.set(stem, entry);
+}
+function focalFor(file: string | null): Focal | null {
+  if (!file) return null;
+  return focalByName[file] ?? focalByStem.get(file.replace(/\.[^.]+$/, '')) ?? null;
+}
+
+/*
+ * Plan the crop for a fixed-ratio plate.
+ *
+ * A plate is a *box* (1:1 or 3:4) and a photograph is not, so something has to
+ * crop. It used to be the browser: we shipped a full-frame image `size*2` wide
+ * and let `object-fit: cover` throw half of it away, which meant a 400x272
+ * source had to stretch to fill a 333x444 device box — a 1.6x upscale, and the
+ * reason the plates looked soft. Now sharp does the crop at build time, so the
+ * pixels that arrive are the pixels that show. Measured over the 238 plates on
+ * /list: 2.6x the rendered detail (Laplacian variance 133 -> 351), +4.4 dB
+ * against a perfect crop, for 35% more bytes on the wire.
+ *
+ * The catch is aim. Astro hands `position` straight to sharp, and sharp only
+ * knows nine positions — left / centre / right, top / centre / bottom — while
+ * focal.json says the bird is at 37%. Snapping to the nearest of three would
+ * move two thirds of the birds off their mark (median 11% of the frame, worst
+ * 31%), so instead we ask sharp for the *smallest* crop that still contains
+ * the window we actually want, and let `object-position` slide the last bit.
+ * A centred bird needs no slack at all and gets an exact 3:4; an off-centre
+ * one costs a little extra width (mean 17%, and those are real pixels, not
+ * upscale). Aim is then identical to what the CSS-only crop used to give.
+ *
+ * The small circles — map pins, bubbles, the home flock — were checked
+ * separately in case pre-cropping was only worth it at plate size, and they
+ * gain the most: a 72px pin went from a 1.47x upscale to none, 3.7x the
+ * detail (Laplacian 350 -> 1300) for 1.1 KB more. Same at 56 and 104.
+ */
+type Crop = { w: number; h: number; position: string; objectPosition: string };
+
+function planCrop(
+  f: Focal | null,
+  srcW: number,
+  srcH: number,
+  boxW: number,
+  boxH: number,
+): Crop {
+  /* no entry in focal.json: centre, biased a little high — the old default */
+  const fx = f ? f.x / 100 : 0.5;
+  const fy = f ? f.y / 100 : 0.46;
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  const T = boxW / boxH;
+  const a = srcW / srcH;
+
+  /* which axis gets cropped, and the window we want on it (0..1 of the source) */
+  const wide = a >= T;
+  const f0 = wide ? T / a : a / T;
+  const want = wide
+    ? Math.min(1 - f0, Math.max(0, fx - f0 / 2))
+    : Math.min(1 - f0, Math.max(0, fy - f0 * 0.46));
+
+  /* the cheapest of sharp's three positions on that axis that still holds it */
+  const names = wide ? ['left', 'centre', 'right'] : ['top', 'centre', 'bottom'];
+  const needs = [
+    want + f0,
+    Math.max(1 - 2 * want, 2 * want + 2 * f0 - 1),
+    1 - want,
+  ].map((v) => Math.min(1, Math.max(f0, v)));
+  let pick = 0;
+  for (let i = 1; i < 3; i++) if (needs[i] < needs[pick]) pick = i;
+  const got = needs[pick];
+  const start = pick === 0 ? 0 : pick === 2 ? 1 - got : (1 - got) / 2;
+
+  /* how far CSS still has to slide inside that crop */
+  const slide = got > f0 + 1e-9 ? clamp01((want - start) / (got - f0)) : 0.5;
+  const pct = (v: number) => `${Math.round(v * 1000) / 10}%`;
+
+  let w = wide ? Math.round(boxH * got * a) : boxW;
+  let h = wide ? boxH : Math.round((boxW * got) / a);
+
+  /* Never ask for more than the photograph has: Astro turns `withoutEnlargement`
+     on whenever `fit` is set, so an over-large request would come back smaller
+     than the width/height we print on the <img> and the aim would drift. Scale
+     the whole plan down instead — the ratio, and so the aim, survives. */
+  const k = Math.min(1, srcW / w, srcH / h);
+  if (k < 1) {
+    w = Math.max(1, Math.round(w * k));
+    h = Math.max(1, Math.round(h * k));
+  }
+
+  return {
+    w,
+    h,
+    position: names[pick],
+    objectPosition: wide ? `${pct(slide)} 50%` : `50% ${pct(slide)}`,
+  };
+}
+
+interface Props {
+  bird: Bird;
+  /** Edge of the picture box in CSS px. Default 160. */
+  size?: number;
+  /** 'square' (1:1), 'circle' (1:1, round), 'portrait' (3:4), 'free' (natural). */
+  shape?: 'square' | 'circle' | 'portrait' | 'free';
+  /** Show the English name under the picture. Default true. */
+  name?: boolean;
+  /** Also show the scientific name, italic. Default false. */
+  genus?: boolean;
+  /** Show the Chinese gloss from the Notion name, small. Default false. */
+  gloss?: boolean;
+  /** Skip lazy-loading — use for the handful above the fold. Default false. */
+  eager?: boolean;
+  /** Clicking opens the bird panel. Default true. Ignored when href is set. */
+  opens?: boolean;
+  /** Render as a link to this URL instead of a panel trigger. */
+  href?: string;
+  /** Claim view-transition-name: bird-<slug>. Default true. ONE per page. */
+  transition?: boolean;
+  /** Extra classes on the root. */
+  class?: string;
+  /** Extra inline style on the root (merged after the transition name). */
+  style?: string;
+}
+
+const {
+  bird,
+  size = 160,
+  shape = 'square',
+  name = true,
+  genus = false,
+  gloss = false,
+  eager = false,
+  opens = true,
+  href,
+  transition = true,
+  class: className = '',
+  style = '',
+} = Astro.props;
+
+const file = firstPhotoFile(bird);
+const asset = photoAsset(file);
+
+/* Built at 2x so it stays crisp on retina. A fixed-ratio plate is cropped to
+   the box by sharp; `free` keeps the photograph's own shape and is only
+   resized. One quality for the whole site — 72 is where webp stops showing
+   its seams on a plate this size (58 is indistinguishable here and 14% of the
+   bytes, if traffic ever matters more than the margin). */
+const QUALITY = 72;
+
+let img: { src: string; w: number; h: number; position: string | null } | null = null;
+if (asset) {
+  const focal = focalFor(file);
+  /* focal.json stores the size *after* EXIF rotation, which is what sharp
+     works on; ImageMetadata does not always agree. Prefer focal's. */
+  const srcW = focal?.w || asset.width;
+  const srcH = focal?.h || asset.height;
+  const boxRatio = shape === 'portrait' ? 3 / 4 : shape === 'free' ? 0 : 1;
+  const edge = Math.round(size * 2);
+
+  if (boxRatio && srcW && srcH) {
+    const crop = planCrop(focal, srcW, srcH, edge, Math.round(edge / boxRatio));
+    const out = await getImage({
+      src: asset,
+      width: crop.w,
+      height: crop.h,
+      fit: 'cover',
+      position: crop.position,
+      format: 'webp',
+      quality: QUALITY,
+    });
+    img = { src: out.src, w: crop.w, h: crop.h, position: crop.objectPosition };
+  } else {
+    const w = Math.min(edge, asset.width || edge);
+    const h = Math.round(w * ((asset.height || w) / (asset.width || w)));
+    const out = await getImage({ src: asset, width: w, format: 'webp', quality: QUALITY });
+    img = { src: out.src, w, h, position: null };
+  }
+}
+
+const { english, gloss: glossText } = splitName(bird.name);
+
+/* One bird's gloss is not Chinese at all — "Flaco (Eurasian eagle owl)" —
+   so it must not be told it is Simplified Chinese, and a Song face would set
+   its Latin in full-width forms. Everything else in birds.json is CJK. */
+const glossLatin = /[A-Za-z]/.test(glossText);
+
+/* A picture box under ~96px has no room for a caption inside the frame. */
+const roomForLabel = size >= 96;
+
+const Tag = href ? 'a' : opens ? 'button' : 'div';
+
+const styleAttr = [
+  `--thumb: ${size}px`,
+  `--t: ${typeVar(bird.type)}`,
+  transition ? `view-transition-name: ${birdTransitionName(bird)}` : '',
+  style,
+]
+  .filter(Boolean)
+  .join('; ');
+
+const label = genus && bird.genus ? `${english}, ${bird.genus}` : english;
+---
+
+<Tag
+  class:list={['thumb', `thumb--${shape}`, !img && 'thumb--hollow', className]}
+  style={styleAttr}
+  data-bird={!href && opens ? bird.id : undefined}
+  data-slug={bird.slug}
+  href={href}
+  type={Tag === 'button' ? 'button' : undefined}
+  aria-label={Tag === 'div' ? undefined : label}
+>
+  <span class="thumb__plate">
+    {img ? (
+      <img
+        src={img.src}
+        width={img.w}
+        height={img.h}
+        alt=""
+        loading={eager ? 'eager' : 'lazy'}
+        decoding="async"
+        style={img.position ? `object-position: ${img.position}` : undefined}
+      />
+    ) : (
+      roomForLabel && <span class="thumb__empty">No photograph yet</span>
+    )}
+  </span>
+
+  {(name || genus || gloss) && (
+    <span class="thumb__caption">
+      {name && <span class="thumb__name">{english}</span>}
+      {gloss && glossText && (
+        <span
+          class="thumb__gloss"
+          lang={glossLatin ? undefined : 'zh-Hans'}
+          data-latin={glossLatin ? '' : undefined}
+        >{glossText}</span>
+      )}
+      {genus && bird.genus && <span class="thumb__genus">{bird.genus}</span>}
+    </span>
+  )}
+</Tag>
+
+<style>
+  .thumb {
+    display: block;
+    width: var(--thumb);
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    text-decoration: none;
+    background: none;
+    border: 0;
+    appearance: none;
+  }
+  /* ---------------------------------------------------------------------
+     One gesture, two destinations — and the reader is told which (TODO C7).
+
+     A thumbnail navigates on /list (an <a> to /birds/<slug>, so the plate
+     grows into the photograph and 135 KB of panel payload stays off the
+     cabinet) and opens the overlay everywhere else (a <button>). Both are
+     right where they are, and the audit's complaint (§7.4) was never that
+     they differ — it is that they looked identical, so you could not tell
+     which gesture you were about to get.
+
+     The tell is the pointer, because that is the one signal a reader gets
+     *before* the click, without being told and without a legend:
+
+       hand        this is a link; it goes to a page
+       zoom-in     this opens here, over what you are looking at
+
+     and the caption of a link underlines on hover the way every other link
+     on this site does (.place__up, .panel__date[href], .day__up). A button
+     never underlines. Two independent cues, both free, neither of them a
+     badge sitting on the photograph.
+
+     What this cannot cover is touch, which has no pointer and no hover. It
+     is the right trade: on touch both gestures land somewhere showing the
+     same bird, and the back gesture returns from either. --------------- */
+  a.thumb { cursor: pointer; }
+  button.thumb { cursor: zoom-in; }
+
+  a.thumb:hover .thumb__name,
+  a.thumb:focus-visible .thumb__name {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+    /* --ink-soft (6.84:1), not the --rule the site's resting links wear.
+       --rule is 0.12 alpha — about 1.1:1, which is right for a hairline
+       that is always there and wrong for a mark whose whole job is to be
+       noticed the moment the pointer arrives. */
+    text-decoration-color: var(--ink-soft);
+  }
+
+  .thumb__plate {
+    display: block;
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    aspect-ratio: 1;
+    background: var(--paper-sunk);
+  }
+  .thumb--portrait .thumb__plate { aspect-ratio: 3 / 4; }
+  .thumb--free .thumb__plate { aspect-ratio: auto; background: none; }
+  .thumb--circle .thumb__plate { border-radius: 50%; }
+
+  /* a filled plate is a print mounted on the paper: one hairline round it
+     and the faintest lift underneath. Circles (pins, bubbles, the flock)
+     are marks, not prints, and stay bare. */
+  .thumb--square .thumb__plate,
+  .thumb--portrait .thumb__plate {
+    box-shadow: var(--plate-edge), var(--plate-lift);
+  }
+
+  .thumb__plate img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    /* A fixed-ratio plate arrives already cropped, and carries an inline
+       object-position for the last few per cent of the aim. This is the
+       fallback for anything that somehow ships without one: the subject is
+       usually a bit above centre in a hand-held bird photo. */
+    object-position: 50% 42%;
+    transition: transform 420ms var(--ease), opacity 260ms ease;
+  }
+  .thumb--free .thumb__plate img { height: auto; object-fit: contain; }
+
+  a.thumb:hover .thumb__plate img,
+  button.thumb:hover .thumb__plate img,
+  a.thumb:focus-visible .thumb__plate img,
+  button.thumb:focus-visible .thumb__plate img { transform: scale(1.035); }
+
+  /* no photograph: a hollow frame, never an empty hole — an inset hairline
+     and no lift, so it never reads as a mounted print.
+
+     Left deliberately bare. <GhostFrame /> — the 43 birds at the foot of
+     /list — is now an *impression*, pressed into the board with tone and
+     an inner shadow, because there it is the subject. This one turns up
+     inline among filled plates for the two spotted birds whose photograph
+     never landed, and it is a gap in a run, not a specimen slot. A hairline
+     is the whole of it; do not give it the ghost's press. */
+  .thumb--hollow .thumb__plate {
+    display: grid;
+    place-items: center;
+    padding: 0.8em;
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--rule);
+  }
+  .thumb--hollow.thumb--circle .thumb__plate { box-shadow: inset 0 0 0 1px var(--rule); }
+
+  .thumb__empty {
+    font-size: var(--fs-small);
+    font-style: italic;
+    line-height: 1.3;
+    text-align: center;
+    color: var(--ink-faint);
+  }
+
+  .thumb__caption {
+    display: block;
+    padding-top: 0.6em;
+  }
+
+  .thumb__name {
+    display: block;
+    font-size: var(--fs-base);
+    line-height: 1.25;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+
+  /* The bird's name in the owners' language, not a footnote to the English
+     one. It used to be --fs-micro grey sans, the same voice as a legend; it
+     is now a Song-style serif at caption size in --ink-soft (6.84:1), which
+     is the CJK register of the --serif the English name is set in. The
+     tracking is there because a Song face sets tight and four characters in
+     a row want the air.
+
+     Every one of the 238 photographed birds has a gloss, so in the cabinet
+     this is one extra line on every plate and none on any — the grid's rhythm
+     is unchanged. Do not turn it on for a grid that mixes glossed and
+     glossless birds; see <GhostFrame />, where only 2 of 43 have one. */
+  .thumb__gloss {
+    display: block;
+    margin-top: 0.1em;
+    font-family: var(--serif-cjk);
+    /* --fs-base, not --fs-small, and this is a measurement rather than a
+       preference. A Song face draws its horizontal strokes as hairlines, so
+       at 13.8px almost no pixel of a glyph reaches full coverage: measured on
+       the rendered plate, six captions came out between 3.78:1 and 6.89:1
+       against the grained paper, with the worst well under the 4.5:1 this
+       type is held to. At 15.2px the same six measure 5.56:1 to 6.89:1 in
+       light and 6.72:1 to 7.95:1 in dark. Re-measured since on the composited
+       pixels over 24 captions, and it holds: 15.2px is 6.92-6.99:1 and the
+       first size below it that drops under 4.5:1 is 14.3px. Neither weight
+       nor a text-stroke buys a smaller one.
+
+       This is a floor, not a rank. /list sets the two Latin lines under it
+       smaller (see the caption block in src/pages/list.astro) precisely
+       because this line cannot follow them down; everywhere the caption is
+       just a name, the name is --fs-base too and the sizes match. */
+    font-size: var(--fs-base);
+    line-height: 1.3;
+    letter-spacing: 0.08em;
+    color: var(--ink-soft);
+  }
+  /* the one Latin "gloss" on the list stays in the Latin text face */
+  .thumb__gloss[data-latin] {
+    font-family: var(--serif);
+    font-style: italic;
+    letter-spacing: 0;
+  }
+
+  .thumb__genus {
+    display: block;
+    font-size: var(--fs-small);
+    font-style: italic;
+    line-height: 1.3;
+    color: var(--ink-soft);
+  }
+</style>

@@ -1,0 +1,340 @@
+---
+/**
+ * The only navigation on the site: a small compass rose, bottom-left.
+ *
+ *          T (when)
+ *   M (where)  ·  G (groups)
+ *          L (life list)
+ *
+ * The hub is home. It sits at ~40% opacity until you point at it, and the
+ * current view is the one glyph drawn in full ink. Keyboard: M T G L jump,
+ * Esc closes the bird panel, or goes back when nothing is open.
+ *
+ * Lives in Base.astro. No view should render its own.
+ */
+import { VIEWS, viewOf } from '../lib/flock';
+import { withBase } from '../lib/paths';
+
+/* `Astro.url.pathname` carries the deployment's base ("/flock/places");
+   `viewOf` strips it before matching, so this keeps working wherever the
+   site is mounted. */
+const here = viewOf(Astro.url.pathname);
+/* VIEWS holds site-root routes, which are not URLs — `withBase` makes them
+   ones. Read them through `at()` and the prefix cannot be forgotten. */
+const at = (id: string) => {
+  const v = VIEWS.find((x) => x.id === id)!;
+  return { ...v, href: withBase(v.href) };
+};
+
+const home = at('home');
+const north = at('timeline');
+const west = at('map');
+const east = at('groups');
+const south = at('list');
+---
+
+<nav class="compass" id="compass" tabindex="-1" aria-label="Views">
+  <a
+    class="compass__hub"
+    href={home.href}
+    aria-label={`${home.label} — home`}
+    aria-current={here === 'home' ? 'page' : undefined}
+    data-view="home"
+  >
+    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+      <path d="M6 1 L7.4 6 L6 11 L4.6 6 Z" fill="currentColor" />
+    </svg>
+  </a>
+
+  <a class="compass__pt compass__pt--n" href={north.href} data-view="timeline"
+     data-key={north.key?.toLowerCase()}
+     aria-current={here === 'timeline' ? 'page' : undefined}>
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+      <line x1="2" y1="10" x2="18" y2="10" stroke="currentColor" stroke-width="1.1" />
+      <circle cx="5.5" cy="10" r="1.5" fill="currentColor" />
+      <circle cx="10" cy="10" r="1.5" fill="currentColor" />
+      <circle cx="15.5" cy="10" r="1.5" fill="currentColor" />
+    </svg>
+    <span class="compass__label">{north.label}<i>T</i></span>
+  </a>
+
+  <a class="compass__pt compass__pt--w" href={west.href} data-view="map"
+     data-key={west.key?.toLowerCase()}
+     aria-current={here === 'map' ? 'page' : undefined}>
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+      <path
+        d="M2 5.5 L7.3 3.4 L12.7 5.9 L18 3.6 V14.6 L12.7 16.9 L7.3 14.4 L2 16.5 Z"
+        fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"
+      />
+      <path d="M7.3 3.4 V14.4 M12.7 5.9 V16.9" stroke="currentColor" stroke-width="0.8" opacity="0.55" />
+    </svg>
+    <span class="compass__label">{west.label}<i>M</i></span>
+  </a>
+
+  <a class="compass__pt compass__pt--e" href={east.href} data-view="groups"
+     data-key={east.key?.toLowerCase()}
+     aria-current={here === 'groups' ? 'page' : undefined}>
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+      <circle cx="7" cy="7.4" r="4.4" fill="none" stroke="currentColor" stroke-width="1.1" />
+      <circle cx="14.2" cy="10.4" r="3" fill="none" stroke="currentColor" stroke-width="1.1" />
+      <circle cx="8.6" cy="15.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.1" />
+    </svg>
+    <span class="compass__label">{east.label}<i>G</i></span>
+  </a>
+
+  <a class="compass__pt compass__pt--s" href={south.href} data-view="list"
+     data-key={south.key?.toLowerCase()}
+     aria-current={here === 'list' ? 'page' : undefined}>
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+      <circle cx="3.2" cy="5.5" r="1.1" fill="currentColor" />
+      <circle cx="3.2" cy="10" r="1.1" fill="currentColor" />
+      <circle cx="3.2" cy="14.5" r="1.1" fill="currentColor" />
+      <path d="M7 5.5 H17.5 M7 10 H15 M7 14.5 H16.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" />
+    </svg>
+    <span class="compass__label">{south.label}<i>L</i></span>
+  </a>
+</nav>
+
+<style>
+  .compass {
+    position: fixed;
+    /* geometry lives in global.css so every view can reserve the corner
+       with --compass-safe; keep the two in step if you change it here */
+    left: var(--compass-inset);
+    bottom: var(--compass-inset);
+    /* below <BirdPanel /> (50) so the overlay covers it while modal */
+    z-index: 45;
+    display: grid;
+    grid-template-areas:
+      ".  n  ."
+      "w  c  e"
+      ".  s  .";
+    grid-template-columns: repeat(3, calc(var(--compass-size) / 3));
+    grid-template-rows: repeat(3, calc(var(--compass-size) / 3));
+    place-items: center;
+    /* Quiet, but it is the only navigation on the site: 0.68 is the point
+       where the rose clears the 3:1 minimum for a UI graphic in both
+       themes (measured 3.24:1 light, 4.23:1 dark). It still inks up
+       fully on hover and focus.
+
+       On the glyphs, not on the nav. The whole element at 0.68 took its own
+       paper backing down with it, so the page showed through the halo at
+       32% and a place name scrolling under the rose came out as a ghost of
+       itself rather than as nothing (AUDIT2 §5.1). The five marks are the
+       thing that is quiet; the paper they stand on is paper. */
+    --rose-ink: 0.68;
+    transition: opacity 240ms ease;
+    view-transition-name: compass;
+    /* the four empty corners of the 3x3 grid used to eat clicks meant for
+       the page underneath (the "← the whole map" back link, among others);
+       only the five glyphs are targets now */
+    pointer-events: none;
+  }
+
+  /* Paper under the rose. Every view scrolls its first column through this
+     corner (the gutter is 86px at 1440, the rose reaches 116), so the
+     backing has to actually cover: solid paper under the glyphs, a frosted
+     ring where it fades, and no edge — it is the page's own paper, not a
+     card. The blur is what stops a photograph scrolling past from tangling
+     with the four glyphs.
+
+     Solid to 82%, not to 58%. The phone index on /places is 37 full-bleed
+     rows and every one of them passes under this corner as you scroll; at
+     58% a name came out half-legible and blurred rather than covered —
+     "Finley Golf Club" with a hole in it reads as a rendering fault, not as
+     something behind something (AUDIT2 §5.1). A name is now either there or
+     it is not. The fade that is left is 18px of paper going to nothing,
+     which is what keeps this a corner of the page rather than a card on
+     top of it. */
+  .compass::before {
+    content: "";
+    position: absolute;
+    inset: calc(-1 * var(--compass-halo));
+    z-index: -1;
+    border-radius: 50%;
+    background: radial-gradient(
+      closest-side,
+      var(--paper) 82%,
+      color-mix(in srgb, var(--paper) 72%, transparent) 91%,
+      transparent 100%
+    );
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    -webkit-mask-image: radial-gradient(closest-side, #000 86%, transparent 100%);
+    mask-image: radial-gradient(closest-side, #000 86%, transparent 100%);
+    pointer-events: none;
+  }
+
+  .compass:hover,
+  .compass:focus-within { --rose-ink: 1; }
+  /* the "skip to the compass" link lands here; it is a target, not a stop */
+  .compass:focus { outline: none; }
+
+  .compass__hub,
+  .compass__pt {
+    pointer-events: auto;
+    opacity: var(--rose-ink);
+    transition: opacity 240ms ease;
+    display: grid;
+    place-items: center;
+    width: calc(var(--compass-size) / 3);
+    height: calc(var(--compass-size) / 3);
+    color: var(--ink-soft);
+    text-decoration: none;
+    border-radius: 50%;
+    transition: color 200ms ease, background-color 200ms ease;
+  }
+
+  /* the hub is a link home, so it carries the same ink as the points;
+     it stays quieter by being a smaller mark, not a fainter one */
+  .compass__hub { grid-area: c; }
+  .compass__pt--n { grid-area: n; }
+  .compass__pt--w { grid-area: w; }
+  .compass__pt--e { grid-area: e; }
+  .compass__pt--s { grid-area: s; }
+
+  .compass__hub:hover,
+  .compass__pt:hover { color: var(--ink); }
+
+  /* Where you are — and, since B9, what month it is. The disc under the
+     current glyph is the season's colour at 16%: 8% of ink was invisible in
+     a hue that is lighter than ink, and 16% of a season lands it back on the
+     same tone (1.11-1.14:1 against the paper, where ink at 8% was 1.13:1).
+
+     The glyph itself does not change. It stays opaque --ink, so the mark that
+     actually has to be seen still measures 5.47:1 against the paper in light
+     and 7.33:1 in dark, and 4.81-5.06:1 against its own tinted disc — the
+     same as the 4.92:1 it had over the ink wash. The quiet points keep
+     --ink-soft at 3.23:1 / 4.25:1, untouched. */
+  .compass__hub[aria-current],
+  .compass__pt[aria-current] {
+    color: var(--ink);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+
+  /* name + shortcut, only while pointing. All four labels sit in one slot
+     to the RIGHT of the whole rose, at the row of their glyph — never inside
+     the 3x3 grid, where "Where" used to run straight across the hub and the
+     Groups glyph. They are positioned against the nav, not the point. */
+  .compass__label {
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 50%;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5em;
+    padding: 0.15em 0.55em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--ink-faint);
+    /* a slip of paper, so the label stays legible over whatever is scrolling
+       past — it lands outside the rose's own backing */
+    background: var(--paper);
+    box-shadow: 0 0 0 1px var(--rule-soft);
+    opacity: 0;
+    transform: translate(-3px, -50%);
+    pointer-events: none;
+    transition: opacity 180ms ease, transform 180ms var(--ease);
+  }
+  .compass__pt--n .compass__label { top: calc(var(--compass-size) / 6); }
+  .compass__pt--s .compass__label { top: calc(var(--compass-size) * 5 / 6); }
+  .compass__pt:hover .compass__label,
+  .compass__pt:focus-visible .compass__label { opacity: 1; transform: translate(0, -50%); }
+
+  /* the keyboard shortcut. It is information, not decoration, so it keeps
+     the label's own ink — it stays subordinate by being smaller. */
+  .compass__label i {
+    font-style: normal;
+    font-size: 0.9em;
+  }
+
+  @media (max-width: 760px) {
+    /* --compass-size drops to 78px in global.css; the grid follows */
+    .compass { --rose-ink: 0.75; }
+    /* no hover on a phone — the labels would never show, so drop them */
+    .compass__label { display: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .compass,
+    .compass__hub,
+    .compass__pt,
+    .compass__label { transition: none; }
+  }
+
+  @media print { .compass { display: none; } }
+</style>
+
+<script>
+  import { closeBird, isPanelOpen } from '../lib/panel';
+
+  /*
+   * Where M/T/G/L go is read off the rose itself, not from a second copy of
+   * the route table. Every `<a>` up there already carries the right URL —
+   * server-rendered, base and all — so the shortcut is literally "click that
+   * link", and the script ships no paths of its own. That also keeps
+   * `src/lib/paths.ts` out of this bundle: there is nothing here left to
+   * prefix, and no route root can go stale against `VIEWS`.
+   *
+   * `getAttribute`, not `.href`: we want the path as written, so the
+   * same-page test below can compare it with `location.pathname`.
+   */
+  const hrefOf = (sel: string): string | null =>
+    document.querySelector<HTMLAnchorElement>(`#compass ${sel}`)?.getAttribute('href') ?? null;
+
+  function typing(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+    return /^(input|textarea|select)$/i.test(target.tagName);
+  }
+
+  async function go(href: string) {
+    if (location.pathname.replace(/\/+$/, '') === href.replace(/\/+$/, '')) return;
+    try {
+      const { navigate } = await import('astro:transitions/client');
+      navigate(href);
+    } catch {
+      location.assign(href);
+    }
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (typing(e.target)) return;
+
+    if (e.key === 'Escape') {
+      // the panel handles its own Esc first (capture phase); if it is still
+      // open we never get here, so this is always "leave this view"
+      if (isPanelOpen()) { closeBird(); return; }
+      e.preventDefault();
+      if (history.length > 1) history.back();
+      else {
+        const home = hrefOf('.compass__hub');
+        if (home) void go(home);
+      }
+      return;
+    }
+
+    /* One letter only. `e.key` can be `"` or `]`, and those would go into the
+       selector below and throw rather than politely miss. */
+    const k = e.key.toLowerCase();
+    if (!/^[a-z]$/.test(k)) return;
+
+    const href = hrefOf(`.compass__pt[data-key="${k}"]`);
+    if (!href) return;
+    if (isPanelOpen()) closeBird();
+    e.preventDefault();
+    void go(href);
+  }
+
+  // one listener for the life of the document, so client-side navigation
+  // never stacks duplicates
+  const w = window as unknown as { __compassWired?: boolean };
+  if (!w.__compassWired) {
+    w.__compassWired = true;
+    document.addEventListener('keydown', onKey);
+  }
+</script>

@@ -1,0 +1,487 @@
+---
+/**
+ * The ledger — 238 birds re-read as the 64 days they were actually found on.
+ * Days, never mornings: `days.ts` is explicit that this data keeps no time of
+ * day, and the two user-facing surfaces that say so (DayGrid, /days/<iso>)
+ * are right. This comment used to be the seam where that would get lost.
+ *
+ * A field notebook, oldest first, one line a day: the day's numeral in the
+ * margin, where it happened when the data can prove where, how many new
+ * birds, and the birds themselves as a contact strip of 36px circles. A month
+ * heading every time the month turns. A pencil bracket down the margin
+ * wherever consecutive days belong to one trip.
+ *
+ * Not a calendar heatmap: 64 marks in 730 cells is 91% empty, and an empty
+ * grid is a dashboard's way of saying nothing. Not cards either — a card per
+ * day would make the 19 one-bird days look like failures. A ledger line makes
+ * a one-bird day look like what it was: a short walk.
+ *
+ * THE PLACE COLUMN IS ALLOWED TO BE BLANK. 14 of these 64 days cannot be
+ * placed by any rule this data supports (DESIGN2 §0.1), so those rows print
+ * the count and nothing else. One more (9 Jul 2025) can only be placed as a
+ * kind of place and prints "on the road". That restraint is the same instinct
+ * as the hollow frames on /list, and it is the reason the other 49 can be
+ * believed. The lede says all three buckets — see `days.ts`.
+ *
+ * THE ONE PAGE ON THE SITE WHERE EVERY THUMB MAY BE NAMED. A bird has exactly
+ * one first date, so it appears on exactly one row, so all ~223 strip thumbs
+ * can carry `bird-<slug>` without ever colliding (README §5 rule 1). Click a
+ * row and its visible birds fly into the day page's grid.
+ */
+import Base from '../layouts/Base.astro';
+import BirdThumb from '../components/BirdThumb.astro';
+import { formatDate } from '../lib/flock';
+import { inkLine } from '../lib/ink';
+import {
+  days,
+  firstDay,
+  lastDay,
+  months,
+  monthKey,
+  monthLabel,
+  namedDays,
+  newBirds,
+  pencilSegment,
+  scopedDays,
+  unplacedDays,
+  dayNumeral,
+  daysSince,
+  type Cap,
+  type Day,
+} from '../lib/days';
+import { withBase } from '../lib/paths';
+
+/* The lede is a partition of all 64 days and has to stay one: three buckets
+   summing to `days.length`. The middle one is easy to lose — it is a single
+   day (9 Jul 2025) that the rule can place only as a kind of place, and its
+   row prints "on the road" — and a sentence that names the other two and
+   skips it reads as exhaustive while being short by a day. The clause drops
+   out on its own if a sync ever empties that bucket. */
+const scopePhrase =
+  scopedDays === 1 ? 'on the road' : `${scopedDays} only by the kind of place they were`;
+
+/* How much of a day fits in the strip before it has to say "+n". Twelve at
+   36px with 6px gaps is 498px, which is the widest strip that still leaves
+   the place line room to be read at 900px. */
+const STRIP = 12;
+
+const span = `${formatDate(firstDay.iso)} and ${formatDate(lastDay.iso)}`;
+
+/* ---------------- the record against today (I4) ----------------
+ *
+ * The ledger has a real last line — 8 Aug 2026 — and the visitor has a real
+ * now. So below the last entry the book is ruled off in pencil, and under
+ * the heading of whatever month the visitor is standing in there is one
+ * line in a fainter hand: today's numeral and how long it has been.
+ *
+ * "Days since the last new bird" is the only honest count. This data holds
+ * first sightings and nothing else: a day out that found nothing new left
+ * no trace, so "quiet days" would claim a silence the record cannot hear
+ * (DESIGN2 §1.5).
+ *
+ * The date rendered here is the BUILD date — what a visitor with no
+ * JavaScript sees, and the first paint before the inline script below
+ * swaps in the day they actually opened the page on. Same arrangement as
+ * the season in Base.astro: usually identical, and when it is not, still a
+ * true date rather than a blank. */
+const now = new Date();
+const todayIso = [
+  now.getFullYear(),
+  String(now.getMonth() + 1).padStart(2, '0'),
+  String(now.getDate()).padStart(2, '0'),
+].join('-');
+const since = daysSince(lastDay.iso, todayIso);
+const sinceLine = (n: number) => `${n} ${n === 1 ? 'day' : 'days'} since the last new bird`;
+
+/* The rule under the last entry: the same pen as the trip brackets, drawn
+   in a 1000 x 12 box the CSS stretches to the ledger's measure. The ends are
+   free — a pinned end on a line that runs to the column edge reads as a
+   pinch, not a stroke. */
+const closingRule = inkLine([0, 6], [1000, 6], 64, { wobble: 2.4, steps: 10, pinEnds: false }).d;
+
+/** where a day sits in its trip, for the bracket segment it draws */
+function capOf(day: Day): Cap | null {
+  if (!day.run) return null;
+  if (day.runIndex === 1) return day.run.dayCount === 1 ? 'solo' : 'start';
+  return day.runIndex === day.run.dayCount ? 'end' : 'mid';
+}
+---
+
+<Base
+  title="Days · Birding Checklist"
+  description={`${days.length} days out between ${formatDate(firstDay.iso)} and ${formatDate(lastDay.iso)}.`}
+>
+  <section class="page days">
+    <header class="page__head">
+      <p class="eyebrow">Birding checklist</p>
+      <h1 class="display">Days</h1>
+      <p class="lede">
+        {days.length} days out between {span} — {namedDays} of them somewhere
+        the record can name{scopedDays === 1 ? (
+          <>, one only as <i>{scopePhrase}</i></>
+        ) : scopedDays > 1 ? (
+          <>, {scopePhrase}</>
+        ) : null}, and {unplacedDays} not at all.
+      </p>
+    </header>
+
+    <div class="ledger">
+      {months.map((month) => (
+        <section class="ledger__month" aria-labelledby={`m-${month.key}`}>
+          <h2 class="ledger__head meta" id={`m-${month.key}`}>{month.label}</h2>
+
+          <ol class="ledger__days">
+            {month.days.map((day) => {
+              const cap = capOf(day);
+              const shown = day.birds.slice(0, STRIP);
+              const more = day.count - shown.length;
+              return (
+                <li class:list={['ledger__li', cap && 'is-run']}>
+                  {/* the bracket cannot be rotated into a 22px margin on a
+                      phone, so down there the trip says its name in words */}
+                  {day.run && day.runIndex === 1 && (
+                    <p class="ledger__trip meta">{day.run.region} · {day.run.dayCount} days</p>
+                  )}
+
+                  <a class="row" href={withBase(`/days/${day.iso}`)}>
+                    {/* the pencil is a child of the row, not of the margin
+                        cell, so it runs the row's whole box: the segments of
+                        two neighbouring days then meet with no seam */}
+                    {cap && (
+                      <svg class="row__pencil" viewBox="0 0 12 100" preserveAspectRatio="none" aria-hidden="true">
+                        <path d={pencilSegment(day.iso, cap)} />
+                      </svg>
+                    )}
+                    <span class="row__brk" aria-hidden="true">
+                      {day.run && day.runIndex === 1 && (
+                        <span class="row__trip">{day.run.label}</span>
+                      )}
+                    </span>
+
+                    <span class="row__num">{dayNumeral(day.iso)}</span>
+
+                    <span class="row__what">
+                      {day.where && <span class="row__place">{day.where}</span>}
+                      {day.where && <span class="row__dot" aria-hidden="true"> · </span>}
+                      <span class="row__count">{newBirds(day.count)}</span>
+                    </span>
+
+                    <span class="row__strip">
+                      {shown.map((bird) => (
+                        <BirdThumb
+                          bird={bird}
+                          size={36}
+                          shape="circle"
+                          name={false}
+                          opens={false}
+                          class="row__thumb"
+                        />
+                      ))}
+                      {/* two counts, because the strip is 12 wide on a
+                          window and 6 wide on a phone and "+9" has to be
+                          true in both */}
+                      {more > 0 && <span class="row__more row__more--wide">+{more}</span>}
+                      {day.count > 6 && (
+                        <span class="row__more row__more--narrow">+{day.count - 6}</span>
+                      )}
+                    </span>
+                  </a>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ))}
+
+      {/* today: ruled off under the last entry, then one line in pencil.
+          Hidden outright if the clock says today is not after the last
+          day — a stale build or a wrong clock must not print "0 days". */}
+      <div
+        class="ledger__today"
+        data-last={lastDay.iso}
+        data-last-month={monthKey(lastDay.iso)}
+        hidden={since <= 0}
+      >
+        <svg class="today__rule" viewBox="0 0 1000 12" preserveAspectRatio="none" aria-hidden="true">
+          <path d={closingRule} />
+        </svg>
+        <h2
+          class="ledger__head meta"
+          data-today-month
+          hidden={monthKey(todayIso) === monthKey(lastDay.iso)}
+        >
+          {monthLabel(todayIso)}
+        </h2>
+        <p class="row row--today">
+          <span class="row__brk" aria-hidden="true"></span>
+          <span class="row__num" data-today-num>{dayNumeral(todayIso)}</span>
+          <span class="row__what">
+            <span class="today__word">Today</span>
+            <span class="row__dot" aria-hidden="true"> · </span>
+            <span class="row__count" data-today-since>{sinceLine(since)}</span>
+          </span>
+        </p>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<script is:inline data-astro-rerun>
+  /*
+   * The day the visitor actually opened the page on, in place of the build
+   * date. Inline and re-run on every swap, like the season script in
+   * Base.astro, because a module script runs once per document and this
+   * page is reached by client-side navigation from the timeline's footer.
+   * UTC arithmetic on local calendar dates, so a DST day is still one day.
+   */
+  (function () {
+    var root = document.querySelector('.ledger__today');
+    if (!root) return;
+    var last = root.getAttribute('data-last');
+    if (!last) return;
+    var now = new Date();
+    var y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+    var todayUtc = Date.UTC(y, m, d);
+    var lastUtc = Date.UTC(+last.slice(0, 4), +last.slice(5, 7) - 1, +last.slice(8, 10));
+    var since = Math.round((todayUtc - lastUtc) / 864e5);
+    if (since <= 0) { root.hidden = true; return; }
+    root.hidden = false;
+    var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'];
+    var head = root.querySelector('[data-today-month]');
+    if (head) {
+      head.textContent = MONTHS[m] + ' ' + y;
+      var key = y + '-' + String(m + 1).padStart(2, '0');
+      head.hidden = key === root.getAttribute('data-last-month');
+    }
+    var num = root.querySelector('[data-today-num]');
+    if (num) num.textContent = String(d);
+    var line = root.querySelector('[data-today-since]');
+    if (line) line.textContent = since + (since === 1 ? ' day' : ' days') + ' since the last new bird';
+  })();
+</script>
+
+<style>
+  /* the ledger's own column, wide enough for a pencil bracket and,
+     on a wide window, the trip's name stood on end beside it */
+  .ledger {
+    --brk: clamp(22px, 3.2vw, 46px);
+    --num: 64px;
+    padding: 0 var(--gutter);
+    /* a ledger line has a measure like any other line of type: 46 + 64 for
+       the margin and the numeral, ~500 for the widest contact strip, and
+       the place name in between. Past about a thousand pixels the eye
+       stops being able to carry a row from its numeral to its thumbs. */
+    max-width: calc(1120px + 2 * var(--gutter));
+  }
+
+  .ledger__month + .ledger__month { margin-top: clamp(28px, 4vh, 44px); }
+
+  .ledger__head {
+    margin: 0 0 0.9em;
+    padding: 0 0 0.5em var(--brk);
+    border-bottom: 1px solid var(--rule-soft);
+  }
+
+  .ledger__days {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ledger__trip {
+    margin: 1.1em 0 0.35em;
+    padding-left: var(--brk);
+    color: var(--ink-soft);
+  }
+
+  /* --- one day --------------------------------------------------------- */
+
+  .row {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--brk) var(--num) minmax(0, 1fr);
+    grid-template-areas:
+      'brk num what'
+      'brk .   strip';
+    align-items: center;
+    column-gap: 0;
+    row-gap: 6px;
+    margin: 0 -12px;
+    padding: 10px 12px;
+    color: inherit;
+    text-decoration: none;
+    border-radius: 2px;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .row:hover { background: var(--rule-soft); }
+
+  /* --- the margin ------------------------------------------------------ */
+
+  .row__brk {
+    grid-area: brk;
+    position: relative;
+    align-self: stretch;
+  }
+
+  .row__pencil {
+    position: absolute;
+    /* the row's border box is 12px wider than its content on each side, so
+       --brk from the border edge is the right edge of the margin column */
+    top: 0;
+    left: var(--brk);
+    width: 12px;
+    /* an SVG with a viewBox has an intrinsic ratio, so `bottom: 0` alone is
+       over-constrained and gets dropped: say the height out loud */
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .row__pencil path {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+    opacity: 0.85;
+  }
+
+  .row__trip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    writing-mode: vertical-rl;
+    white-space: nowrap;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.14em;
+    line-height: 1;
+    color: var(--ink-faint);
+    pointer-events: none;
+  }
+
+  /* --- the numeral, the place, the count ------------------------------- */
+
+  .row__num {
+    grid-area: num;
+    align-self: start;
+    font-family: var(--serif);
+    font-size: var(--fs-lg);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+    color: var(--ink);
+  }
+
+  .row__what {
+    grid-area: what;
+    min-width: 0;
+    padding-right: clamp(12px, 2vw, 28px);
+    font-family: var(--serif);
+    font-size: var(--fs-base);
+    line-height: 1.4;
+  }
+  .row__place { color: var(--ink); }
+  .row__dot,
+  .row__count { color: var(--ink-faint); }
+
+  /* --- the contact strip ----------------------------------------------- */
+
+  .row__strip {
+    grid-area: strip;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .row__strip :global(.row__thumb) { flex: 0 0 auto; }
+
+  .row__more {
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    padding-left: 0.2em;
+  }
+
+  /* the thumb is decoration inside a link: it must not eat the click, and
+     its hollow frame must not draw a second border inside a 30px circle */
+  .row__strip :global(.thumb) { pointer-events: none; }
+  .row__strip :global(.thumb--hollow .thumb__plate) {
+    box-shadow: inset 0 0 0 1px var(--rule);
+    background: var(--paper-sunk);
+  }
+
+  /* --- today ----------------------------------------------------------- */
+
+  .ledger__today { margin-top: 6px; }
+
+  /* the month the visitor is standing in has no entries under it yet, so
+     its heading is written on the blank page without the printed rule the
+     filled months carry — the pencil ruling-off above is the only line */
+  .ledger__today .ledger__head { border-bottom: none; padding-bottom: 0; margin-bottom: 0.5em; }
+
+  /* the ruling-off under the last entry: from the numeral column to the
+     right edge, where the figures are, not under the margin */
+  .today__rule {
+    display: block;
+    width: calc(100% - var(--brk));
+    height: 12px;
+    margin: 0 0 clamp(28px, 4vh, 44px) var(--brk);
+    overflow: visible;
+  }
+  .today__rule path {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1.2;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+    opacity: 0.85;
+  }
+
+  /* the one line not in ink: it is a link to nothing, so no hover, and
+     the numeral is in the fainter hand because the day is not yet a day */
+  .row--today {
+    margin-top: 0;
+    margin-bottom: 0;
+    cursor: default;
+  }
+  .row--today:hover { background: none; }
+  .row--today .row__num { color: var(--ink-faint); }
+  .today__word { color: var(--ink-soft); font-style: italic; }
+
+  /* --- the wide window ------------------------------------------------- */
+
+  @media (min-width: 900px) {
+    .row {
+      grid-template-columns: var(--brk) var(--num) minmax(0, 1fr) auto;
+      grid-template-areas: 'brk num what strip';
+      row-gap: 0;
+    }
+    .row__num { align-self: center; }
+    .row__strip { gap: 6px; justify-content: flex-end; }
+    .row__more--narrow { display: none; }
+    /* the trip's name is stood on end in the margin instead */
+    .ledger__trip { display: none; }
+  }
+
+  @media (max-width: 899px) {
+    .ledger { --num: 48px; }
+    .row__trip { display: none; }
+    .row__more--wide { display: none; }
+    .row__strip > :global(div) { width: 30px; }
+    /* six thumbs on a phone; the rest are on the day's own page. The divs
+       are the thumbs and the counts are spans, so this cannot hit a count. */
+    .row__strip > :global(div:nth-child(n + 7)) { display: none; }
+  }
+
+  @media print {
+    /* a ledger is the one thing on this site that was always a sheet of
+       paper: the strip goes, the lines stay */
+    .row__strip,
+    .row__pencil,
+    .today__rule { display: none; }
+    .row { break-inside: avoid; }
+  }
+</style>

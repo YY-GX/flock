@@ -1,0 +1,604 @@
+---
+/**
+ * Where — two maps, one camera.
+ *
+ * Level 1 is the United States: 19 travel pins, Hawaiʻi and Puerto Rico in
+ * their inset boxes, and a marker over North Carolina for the home patch.
+ * Clicking that marker does not load a page; it flies the camera into the
+ * Triangle, where the 18 local spots live.
+ *
+ * Without JavaScript the two levels are :target states of the same page, so
+ * the second map is still reachable; with it, the hash is kept in sync and
+ * the move is animated.
+ */
+import Base from '../layouts/Base.astro';
+import MapStage from '../components/MapStage.astro';
+import {
+  placesIn,
+  placeIndex,
+  homeMarker,
+  travelPlaces,
+  homePlaces,
+  sharedBirdCount,
+  scaleBar,
+  LEGEND_KEYS,
+  LEGEND_BOX,
+} from '../lib/mapView';
+import { withBase } from '../lib/paths';
+
+const usPins = placesIn('us');
+const trianglePins = placesIn('triangle');
+
+/*
+ * The place index (TODO C3), and why it exists.
+ *
+ * Measured at 360 px: the US sheet draws at 338 x 240 and the Triangle at
+ * 276 x 240, the smallest photograph on them is 10.2 px across, and 30 of
+ * the 37 are under the 24 px WCAG 2.5.8 asks of a target. Nothing about the
+ * drawing is wrong — the relaxation in mapView has the pins as far apart as
+ * the coordinates allow, with zero overlaps at every width — there is simply
+ * not room for 19 thumb-sized photographs on a 338 px sheet, and the
+ * north-east, where eight of them already touch, is the proof.
+ *
+ * Two answers were on the table. Clustering the pins by proximity and
+ * expanding a cluster on tap was rejected: a cluster bubble is a piece of
+ * machine-made UI on a sheet whose every other mark is drawn by the same
+ * pen; it needs script, on the one page that still works as `:target` with
+ * none; it throws away the photographs, which are the whole point of a pin
+ * (one bird per place, chosen site-wide by assignFaces so each pin shows a
+ * bird you can meet nowhere else); and eight expanded discs at 24 px want
+ * 220 px of a 338 px map, so the expanded state is a list anyway — a list
+ * behind a tap, drawn over the drawing.
+ *
+ * So: the list, in the open, under the map. The map stays a drawing and
+ * keeps every mark it had; the pins stay links, because a photograph you can
+ * tap is not decoration; and the index below is the 24 px target for all 37
+ * places, which is exactly the "equivalent control on the same page"
+ * 2.5.8 allows. It costs no script and no image.
+ */
+const roadIndex = placeIndex('us');
+const homeIndex = placeIndex('triangle');
+
+/*
+ * The key (TODO B7), and the reason it is down here rather than on the map.
+ *
+ * The map now carries six kinds of mark and explained none of them. It also
+ * has nowhere to put a key: the sheet is 1000 x 710 and 70% of it is
+ * coastline, the four ink-free rectangles are the Gulf, the strip above the
+ * northern border, the corner under Florida and the water under Hawaiʻi, and
+ * the compass and the scale bar are standing in the only one of those big
+ * enough. Six entries at a legible size want about 260 x 150 units; the type
+ * inside them would come out at 8.9 px at 1440 and 4.1 px on a phone. The
+ * measurement and the argument are in mapView.ts over `LEGEND_KEYS`.
+ *
+ * A footnote is not the consolation prize. Down here the key is real type at
+ * real size, it is readable on a 390 px phone (where the map's own furniture
+ * is hidden), it is selectable, and a reader using a screen reader meets it
+ * as a list instead of as decoration. The marks in it are cut by the same pen
+ * as the map, so it is still the map's handwriting.
+ */
+const keys = LEGEND_KEYS;
+const usBar = scaleBar('us');
+const triBar = scaleBar('triangle');
+---
+
+<Base
+  title="Where · Birding Checklist"
+  description={`${travelPlaces.length + homePlaces.length} places, from a Durham balcony to the Pacific coast.`}
+>
+  <section class="page">
+    <header class="page__head">
+      <p class="eyebrow">Birding checklist</p>
+      <h1 class="display">Where</h1>
+      <p class="lede">
+        {travelPlaces.length + homePlaces.length} places — {travelPlaces.length} on the road and
+        {' '}{homePlaces.length} close to home. {sharedBirdCount} birds turned up in
+        more than one of them.
+      </p>
+    </header>
+
+    <div class="camera-fit">
+      <div class="camera" style={`--home-x:${homeMarker.x}%;--home-y:${homeMarker.y}%`}>
+        <div class="stage stage--us" id="us">
+          <MapStage space="us" places={usPins} home={true} homeHref="#triangle" />
+        </div>
+
+        <div class="stage stage--triangle" id="triangle">
+          <MapStage space="triangle" places={trianglePins} />
+          <div class="level-bar">
+            <a class="level-back" href="#us" data-level-to="us">
+              <span aria-hidden="true">←</span> the whole country
+            </a>
+            <p class="level-title meta">The Triangle · {homePlaces.length} spots</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* One line, two readings. A phone has no hover and a 10 px photograph,
+        so it is told what the map is for and where the places are instead. */}
+    <p class="map-hint meta">
+      <span class="map-hint__fine">
+        Hover a pin to meet the other birds it is standing on. Click one to open the
+        place, or the boxed Triangle to go in.
+      </span>
+      <span class="map-hint__coarse">
+        At this size the map is a drawing — the photographs are 10 to 27 px across.
+        Tap one if you can; every place is also a line below, and the boxed Triangle
+        still goes in.
+      </span>
+    </p>
+
+    <nav class="place-index" aria-label={`All ${travelPlaces.length + homePlaces.length} places, as a list`}>
+      <h2 class="place-index__head">On the road · {travelPlaces.length}</h2>
+      <ol class="place-index__list">
+        {roadIndex.map((p) => (
+          <li class="place-index__row">
+            <a class="place-index__link" href={withBase(`/places/${p.slug}`)} data-place={p.slug}>
+              <span class="place-index__name">{p.name}</span>
+              <span class="place-index__n"
+                >{p.count}<span class="sr-only"> {p.count === 1 ? 'bird' : 'birds'}</span></span
+              >
+            </a>
+          </li>
+        ))}
+      </ol>
+
+      <h2 class="place-index__head">The Triangle · {homePlaces.length}</h2>
+      <ol class="place-index__list">
+        {homeIndex.map((p) => (
+          <li class="place-index__row">
+            <a class="place-index__link" href={withBase(`/places/${p.slug}`)} data-place={p.slug}>
+              <span class="place-index__name">{p.name}</span>
+              <span class="place-index__n"
+                >{p.count}<span class="sr-only"> {p.count === 1 ? 'bird' : 'birds'}</span></span
+              >
+            </a>
+          </li>
+        ))}
+      </ol>
+    </nav>
+
+    <ul class="map-key" aria-label="What the marks on the map mean">
+      {keys.map((k) => (
+        <li class="map-key__row">
+          <svg
+            class="map-key__mark"
+            viewBox={`0 0 ${LEGEND_BOX.w} ${LEGEND_BOX.h}`}
+            width={LEGEND_BOX.w}
+            height={LEGEND_BOX.h}
+            aria-hidden="true"
+          >
+            {k.discs?.map((d) => (
+              <circle class={`map-key__disc map-key__disc--${d.role}`} cx={d.cx} cy={d.cy} r={d.r} />
+            ))}
+            {k.ink.map((s) => (
+              <path class={`map-key__ink map-key__ink--${s.role}`} d={s.d} />
+            ))}
+          </svg>
+          <span class="map-key__what">{k.label}</span>
+        </li>
+      ))}
+    </ul>
+
+    {/* Says in words what the map says in ink, for a reader who is not
+        looking at it — and the numbers come from the same two calls that
+        drew the bars, so the sentence cannot drift from the drawing. */}
+    <p class="map-note meta">
+      North is up on both sheets — that is the arrow standing in the Gulf of Mexico, and
+      the bar beside it measures {usBar.miles} miles. On the Triangle the same bar
+      measures {triBar.miles}.
+    </p>
+  </section>
+</Base>
+
+<script>
+  /*
+   * The camera. A level is a state of this page, not a navigation: the two
+   * maps are both in the DOM and CSS scales one into the other. The hash is
+   * kept in step so /places#triangle is shareable and Back works.
+   */
+  type Level = 'us' | 'triangle';
+
+  function apply(level: Level) {
+    const camera = document.querySelector<HTMLElement>('.camera');
+    if (!camera) return;
+    camera.dataset.level = level;
+  }
+
+  function levelFromHash(): Level {
+    return location.hash === '#triangle' ? 'triangle' : 'us';
+  }
+
+  function setup() {
+    if (!document.querySelector('.camera')) return;
+    apply(levelFromHash());
+  }
+
+  /*
+   * Capture phase, and we stop the event dead: Astro's ClientRouter has its
+   * own click handler registered earlier, and a level change is not a
+   * navigation — letting it through pushes a second history entry.
+   */
+  document.addEventListener('click', (e) => {
+    const link = (e.target as Element | null)?.closest<HTMLElement>('[data-level-to]');
+    if (!link) return;
+    const camera = document.querySelector<HTMLElement>('.camera');
+    if (!camera) return; // a link on some other page; let it behave normally
+    e.preventDefault();
+    e.stopPropagation();
+    const level = (link.dataset.levelTo === 'triangle' ? 'triangle' : 'us') as Level;
+    apply(level);
+    const url = location.pathname + (level === 'triangle' ? '#triangle' : '');
+    history.pushState({ level }, '', url);
+    /* Move focus into the map that just arrived, for keyboard and readers. */
+    const stage = camera.querySelector<HTMLElement>(`.stage--${level}`);
+    stage?.querySelector<HTMLElement>('a')?.focus({ preventScroll: true });
+  }, true);
+
+  window.addEventListener('popstate', () => apply(levelFromHash()));
+  document.addEventListener('astro:page-load', setup);
+  setup();
+</script>
+
+<style>
+  /* the camera measures itself against the column it sits in, not the window:
+     with the scrollbar gutter always reserved, 100vw overshoots the content
+     box by the width of the scrollbar and the map came out ~10px too tall */
+  .camera-fit { container-type: inline-size; }
+
+  .camera {
+    /* tall enough to be a map, never taller than the map actually drawn */
+    --cam-inline: var(--gutter);
+    --cam-h: min(
+      clamp(280px, 64vh, 660px),
+      calc((100cqw - 2 * var(--cam-inline)) * 710 / 1000)
+    );
+    position: relative;
+    height: var(--cam-h);
+    margin: 0 var(--cam-inline);
+    /* the map being flown away from is eight times life size; it must not
+       become page scroll. clip keeps hover labels able to lean outside. */
+    overflow: hidden;
+    overflow: clip;
+    overflow-clip-margin: 20px;
+  }
+
+  .stage {
+    position: absolute;
+    inset: 0;
+    /* a direct hit on /places#triangle must not scroll the heading away */
+    scroll-margin-top: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      opacity 340ms ease,
+      visibility 0s linear 620ms;
+  }
+
+  .stage :global(.map) {
+    width: 100%;
+    transition: transform 620ms var(--ease);
+  }
+  /* a map never grows taller than the camera it lives in */
+  .stage--us :global(.map) { max-width: calc(var(--cam-h) * 1000 / 710); }
+  .stage--triangle :global(.map) { max-width: calc(var(--cam-h) * 1000 / 870); }
+
+  /* the dive: the country zooms into the Triangle and hands over */
+  .stage--us :global(.map) {
+    transform-origin: var(--home-x) var(--home-y);
+    transform: scale(8);
+  }
+  .stage--triangle :global(.map) {
+    transform-origin: 50% 50%;
+    transform: scale(0.16);
+  }
+
+  .camera:not([data-level]) .stage--us,
+  .camera[data-level='us'] .stage--us,
+  .camera:not([data-level]) .stage--triangle:target,
+  .camera[data-level='triangle'] .stage--triangle {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition:
+      opacity 340ms ease 120ms,
+      visibility 0s linear 0s;
+  }
+
+  .camera:not([data-level]) .stage--us :global(.map),
+  .camera[data-level='us'] .stage--us :global(.map),
+  .camera:not([data-level]) .stage--triangle:target :global(.map),
+  .camera[data-level='triangle'] .stage--triangle :global(.map) {
+    transform: none;
+  }
+
+  /* no JavaScript: :target alone drives the level, so hide level 1 by hand */
+  .camera:not([data-level]):has(.stage--triangle:target) .stage--us {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .camera:not([data-level]):has(.stage--triangle:target) .stage--us :global(.map) {
+    transform: scale(8);
+  }
+
+  /* the level-2 furniture, lined up with the edges of the map itself */
+  .level-bar {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: calc(var(--cam-h) * 1000 / 870);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1em;
+    z-index: 150;
+    /* the bar is two words at the ends of an otherwise empty strip; the map
+       and its pins show through the middle and stay clickable */
+    pointer-events: none;
+  }
+  .level-back,
+  .level-title { pointer-events: auto; }
+
+  .level-back,
+  .level-title {
+    background: var(--paper);
+    padding: 0.25em 0.5em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    /* one line, always: wrapped to two it reaches down into the pins */
+    white-space: nowrap;
+  }
+  .level-back {
+    position: relative;
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .level-back:hover { color: var(--ink); }
+  /*
+   * The way out of the second level is 130 x 17.5 px on a phone, and the way
+   * out has to be reachable by the same thumb as everything else. Growing
+   * the paper pill would put more white over the northern pins, so the pill
+   * keeps its size and the target grows behind it: +4 px top and bottom is
+   * 25.5, and the pill is already 130 wide. (TODO C3)
+   */
+  .level-back::after {
+    content: '';
+    position: absolute;
+    inset: -4px -6px;
+  }
+  .level-title { margin: 0; }
+
+  /* ---- the key, and the sentence under it ---------------------------- */
+
+  .map-key {
+    margin: clamp(16px, 2.4vh, 26px) var(--gutter) 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    /* three columns at 1440, two at a tablet, one on a phone — never a
+       column so narrow the phrase breaks after two words */
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+    gap: 0.55em clamp(1.4rem, 3vw, 2.6rem);
+    max-width: 78rem;
+  }
+
+  .map-key__row {
+    display: flex;
+    align-items: center;
+    gap: 0.7em;
+  }
+
+  .map-key__mark {
+    flex: none;
+    /* the marks are cut in a 64 x 26 box and shown at 1:1, which is the one
+       size at which a 15px pen ring is still a ring */
+    width: 64px;
+    height: 26px;
+    overflow: visible;
+  }
+
+  /*
+   * No feTurbulence down here, deliberately. The map wobbles its strokes
+   * with a displacement map at a scale of 1.2 to 2.2 user units; these
+   * marks are a fifth of the size, and 2 units of displacement on a 26-unit
+   * mark is not a wobble, it is a smear. What is left is the jitter already
+   * in the geometry — inkLine and inkPoly put it in the points themselves —
+   * so the key is drawn by the same hand, with the hand's tremor rather
+   * than the paper's.
+   */
+  .map-key__ink {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .map-key__ink--dash { stroke-dasharray: 5 3.4; }
+  .map-key__ink--dot { stroke-dasharray: 1.3 3; }
+  .map-key__ink--faint {
+    stroke: var(--ink-faint);
+    opacity: 0.6;
+    stroke-dasharray: 4 3.2;
+  }
+  /* the dodge leader, at the weight MapStage draws it: solid, half-strength */
+  .map-key__ink--hair {
+    stroke-width: 1;
+    opacity: 0.5;
+  }
+
+  .map-key__disc--photo {
+    /* a photograph, without being one: the pin's own hairline and the
+       weight of a print, at the size a key can carry */
+    fill: var(--ink);
+    fill-opacity: 0.18;
+    stroke: var(--rule);
+    stroke-width: 1;
+  }
+  /* the true coordinate the leader runs back to: open, like the map's */
+  .map-key__disc--spot {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1;
+    opacity: 0.5;
+  }
+
+  .map-key__what {
+    font-family: var(--serif);
+    font-size: var(--fs-small);
+    line-height: 1.35;
+    text-transform: none;
+    letter-spacing: 0.01em;
+    color: var(--ink-faint);
+    text-wrap: pretty;
+  }
+
+  .map-note {
+    margin: clamp(12px, 1.8vh, 20px) var(--gutter) 0;
+    max-width: 64ch;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    font-size: var(--fs-small);
+    font-family: var(--serif);
+    color: var(--ink-faint);
+  }
+
+  /* ---- the place index (TODO C3) ------------------------------------- */
+
+  /*
+   * When the index is on the page, and why the rule has a height in it.
+   *
+   * The camera is `min(clamp(280px, 64vh, 660px), (100cqw - 2 gutter) * .71)`,
+   * so the map is as often limited by the window's *height* as by its width
+   * — and the pins are a fixed share of the map. Measured at 2x DPR, with
+   * the thumb pad in MapPin already applied, every one of the 37 targets
+   * clears 24 px from about 780 px wide **and** 760 px tall; below either of
+   * those the smallest starts falling short (23.5 px at 720 wide, 21.8 px at
+   * 1440 x 700, 18.2 at 560, 11.7 at 360), and no pad can rescue the
+   * north-east, where eight photographs already touch.
+   *
+   * 860 x 800 is those measurements with a little air. The three widths the
+   * desktop is checked at — 900, 1280, 1440, all at 900 tall — are above
+   * both and see no index at all: up there the map is the interface and does
+   * not need a list of itself. A short desktop window does see one, because
+   * up there the map is 21.8 px and genuinely is not the interface. Drop the
+   * height clause and that case goes back to being unreachable by thumb.
+   */
+  .place-index { display: none; }
+
+  @media (max-width: 860px), (max-height: 800px) {
+    .place-index {
+      display: block;
+      margin: clamp(18px, 3vh, 30px) var(--gutter) 0;
+      max-width: 34rem;
+    }
+  }
+
+  .place-index__head {
+    margin: 1.5em 0 0.1em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    font-weight: 400;
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .place-index__head:first-child { margin-top: 0; }
+
+  .place-index__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  /* a hairline between lines, the way an index is ruled — not a card */
+  .place-index__row + .place-index__row { border-top: 1px solid var(--rule-soft); }
+
+  /*
+   * The whole row is the target. 48 px is twice what 2.5.8 asks and about a
+   * thumb; the name and its count sit on one baseline inside it, so the row
+   * is the pin's own hover label printed out rather than a new kind of
+   * object on the page.
+   */
+  .place-index__link {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.9em;
+    min-height: 48px;
+    padding: 0.85em 0;
+    color: var(--ink);
+    text-decoration: none;
+    font-family: var(--serif);
+    font-size: var(--fs-base);
+    line-height: 1.3;
+  }
+  .place-index__link:hover .place-index__name,
+  .place-index__link:focus-visible .place-index__name {
+    text-decoration: underline;
+    text-decoration-color: var(--ink-soft);
+    text-underline-offset: 0.18em;
+  }
+  .place-index__n {
+    flex: none;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The hint swaps on width alone, not on the index's rule: a short window
+     on a laptop still has a pointer, and "tap one if you can" would be a lie
+     there even though the index below it is warranted. */
+  .map-hint__coarse { display: none; }
+  @media (max-width: 860px) {
+    .map-hint__fine { display: none; }
+    .map-hint__coarse { display: inline; }
+  }
+
+  .map-hint {
+    margin: clamp(20px, 3vh, 36px) var(--gutter) 0;
+    /* two lines, not three: the compass is fixed in this corner and the
+       hint scrolls past it, so the shorter the column the less it grazes */
+    max-width: 64ch;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    font-size: var(--fs-small);
+    font-family: var(--serif);
+    color: var(--ink-faint);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* no dive: the maps simply swap */
+    .stage,
+    .stage :global(.map) { transition: none; }
+    .stage--us :global(.map),
+    .stage--triangle :global(.map) { transform: none; }
+  }
+
+  @media (max-width: 720px) {
+    .camera { --cam-inline: clamp(8px, 3vw, 20px); }
+    .level-back, .level-title { font-size: var(--fs-micro); letter-spacing: 0.1em; }
+  }
+
+  @media (max-width: 560px) {
+    /* the map is a thumbnail here and the bar is still type: keep it to one
+       shallow line so it clears the northernmost pins */
+    .level-bar { gap: 0.4em; }
+    .level-back,
+    .level-title {
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      padding: 0.2em 0.35em;
+    }
+  }
+</style>

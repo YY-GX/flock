@@ -1,0 +1,652 @@
+---
+/**
+ * Field-guide overlay — the one way any view shows a single bird.
+ *
+ * Drop it once per page and give it the birds that page can open:
+ *
+ *   <BirdPanel birds={shownBirds} />
+ *
+ * It renders the markup, embeds a JSON payload keyed by bird.id, and pulls in
+ * src/lib/panel.ts, which wires up [data-bird] triggers, Esc, the focus trap
+ * and scroll restore. Views do not write any of that themselves.
+ *
+ * A second, far smaller payload (#day-payload) is keyed by date instead of by
+ * bird: it is what the overlay's "That day" line reads to name the other
+ * birds found alongside this one. Same rule — pass the subset you show and it
+ * only carries those days.
+ *
+ * Omitting `birds` embeds every bird in birds.json (281). That is convenient
+ * but ~230 KB of JSON, so pass the subset you actually show when you can.
+ *
+ * ## The plate is matted, like a framed print
+ *
+ * 213 of the 238 spotted birds have more than one photograph and they are all
+ * different shapes, so the plate is a fixed frame with the photograph centred
+ * inside it and --paper-sunk showing through as the mat. Paging never resizes
+ * the frame; only the shape of the mat changes. A portrait fills the frame's
+ * height and is narrow, a landscape fills its width and is short — which is
+ * exactly what a wall of framed prints looks like.
+ *
+ * The frame's height is a clamp on vh, so it is stable for a given viewport
+ * and never depends on which photograph is showing. A photograph is never
+ * scaled past the pixels we actually built for it (--iw / --ih, set by
+ * src/lib/panel.ts), so a small original sits small in a wide mat rather than
+ * going soft.
+ */
+import type { Bird } from '../lib/types';
+import { birds as allBirds } from '../lib/data';
+import { companionTable, panelPayload, serialise } from '../lib/panelData';
+
+interface Props { birds?: Bird[] }
+const { birds = allBirds } = Astro.props;
+
+const json = serialise(await panelPayload(birds));
+/* iso -> the day's size and its first few birds, for the "That day" line.
+   One row per day the page's birds were found on, not one per bird: 3,785
+   bytes for all 64 days, against ~206 KB of plates and field marks. */
+const dayJson = serialise(companionTable(birds));
+---
+
+<div id="panel" class="panel" hidden aria-hidden="true">
+  <div class="panel__scrim" data-close></div>
+
+  <article
+    class="panel__sheet"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="panel-name"
+    tabindex="-1"
+  >
+    <button id="panel-close" class="panel__close" type="button" aria-label="Close">
+      <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+        <path d="M4 4 L16 16 M16 4 L4 16" fill="none" stroke="currentColor" stroke-width="1.3" />
+      </svg>
+    </button>
+
+    <div id="panel-plate" class="panel__plate">
+      <div class="panel__mat">
+        <!-- One box the size of the mat, holding both layers. Zoom scales this,
+             so the cross-fade, --iw/--ih and the mat's layout are untouched. -->
+        <div id="panel-zoom" class="panel__zoom">
+          <img id="panel-img" class="is-front" alt="" decoding="async" draggable="false" hidden />
+          <img id="panel-img-b" alt="" decoding="async" draggable="false" hidden />
+        </div>
+        <p id="panel-noimg" class="panel__noimg" hidden>No photograph yet</p>
+      </div>
+
+      {/* The two ways of getting closer, in one corner. The magnifier goes as
+          far as the file we built (1200px); the link goes past it, to the
+          original in R2. Both are filled and shown by src/lib/plateViewer.ts
+          and both start hidden, so a plate that cannot be enlarged and has no
+          bigger original leaves this corner completely empty. */}
+      <div class="panel__tools">
+        <button
+          id="panel-zoom-btn"
+          class="panel__zoombtn"
+          type="button"
+          data-plate-zoom
+          aria-label="Enlarge the photograph"
+          aria-pressed="false"
+          hidden
+        >
+          <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="6.25" fill="none" stroke="currentColor" stroke-width="1.3" />
+            <path d="M15.2 15.2 L20 20" fill="none" stroke="currentColor" stroke-width="1.3"
+              stroke-linecap="round" />
+            <path d="M7.4 10.5 H13.6" fill="none" stroke="currentColor" stroke-width="1.3"
+              stroke-linecap="round" />
+            <path class="panel__zoomplus" d="M10.5 7.4 V13.6" fill="none" stroke="currentColor"
+              stroke-width="1.3" stroke-linecap="round" />
+          </svg>
+        </button>
+
+        {/* target="_blank" is the point, not an accident: the original can be
+            62 MB, and that decode belongs in a tab the reader opened on
+            purpose, not under the overlay they are already reading. It also
+            keeps <ClientRouter /> out of it — the router ignores a link with
+            a target. The label says the size before the click. */}
+        <a
+          id="panel-orig"
+          class="panel__orig"
+          data-plate-original
+          target="_blank"
+          rel="noopener noreferrer"
+          hidden
+        >
+          <span data-orig-label></span>
+          <svg class="panel__origout" viewBox="0 0 12 12" width="9" height="9" aria-hidden="true">
+            <path d="M4.1 7.9 L8.3 3.7 M4.9 3.5 H8.5 V7.1" fill="none" stroke="currentColor"
+              stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </a>
+      </div>
+
+      <button
+        id="panel-prev"
+        class="panel__nav panel__nav--prev"
+        type="button"
+        data-plate-step="-1"
+        aria-label="Previous photograph"
+        hidden
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path d="M15 4 L7 12 L15 20" fill="none" stroke="currentColor" stroke-width="1.25"
+            stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+
+      <button
+        id="panel-next"
+        class="panel__nav panel__nav--next"
+        type="button"
+        data-plate-step="1"
+        aria-label="Next photograph"
+        hidden
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path d="M9 4 L17 12 L9 20" fill="none" stroke="currentColor" stroke-width="1.25"
+            stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+
+      <p id="panel-count" class="panel__count" hidden></p>
+      <p id="panel-live" class="sr-only" role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="panel__guide">
+      {/* An <a>, but only a link when the bird has a day page: src/lib/panel.ts
+          sets href on fill and removes it for the 43 birds with no date, so a
+          dateless bird is plain text and never /days/undefined. */}
+      <a id="panel-date" class="panel__date"></a>
+      <h2 id="panel-name" class="panel__name"></h2>
+      <!-- lang is static because src/lib/panel.ts fills this with textContent
+           and there is exactly one non-Chinese gloss in the whole record
+           ("Flaco (Eurasian eagle owl)"), on a bird nobody has photographed.
+           If a second one ever appears, panel.ts has to set the attribute. -->
+      <p id="panel-gloss" class="panel__gloss" lang="zh-Hans"></p>
+      <p id="panel-genus" class="panel__genus"></p>
+
+      <p id="panel-desc" class="panel__desc"></p>
+
+      <dl id="panel-facts" class="panel__facts"></dl>
+    </div>
+  </article>
+</div>
+
+<script type="application/json" id="bird-payload" is:inline set:html={json}></script>
+<script type="application/json" id="day-payload" is:inline set:html={dayJson}></script>
+
+<script>
+  // side-effect import: registers the document-level listeners and window.birdPanel
+  import '../lib/panel';
+
+  /**
+   * B9's second half: a dot in the colour of the season the bird was first
+   * seen in, before the date line.
+   *
+   * It has to be done from here rather than in the markup because
+   * src/lib/panel.ts fills #panel-date with `textContent`, which would wipe
+   * any element the server had put inside it. `bird:open` is dispatched after
+   * that fill, so this is the first safe moment. The month is read back off
+   * the rendered line — `formatDate` writes "8 Aug 2026" — rather than from
+   * the payload, so the panel's JSON does not have to grow an ISO field for
+   * a 6px mark.
+   *
+   * Reduced motion: nothing moves. No JavaScript: no dot, and the date still
+   * says what month it was, which is the whole of the information.
+   */
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /* meteorological, northern — SEASON_OF_MONTH in src/lib/timeline.ts */
+  const SEASONS = [
+    'winter', 'winter', 'spring', 'spring', 'spring', 'summer',
+    'summer', 'summer', 'autumn', 'autumn', 'autumn', 'winter',
+  ];
+
+  const flag = '__birdPanelSeasonDot';
+  if (!(flag in window)) {
+    (window as unknown as Record<string, boolean>)[flag] = true;
+    document.addEventListener('bird:open', () => {
+      const el = document.getElementById('panel-date');
+      if (!el) return;
+      const month = MONTHS.indexOf((el.textContent || '').split(' ')[1]);
+      if (month < 0) return;
+      const dot = document.createElement('i');
+      dot.className = 'season-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      dot.style.setProperty('--s', `var(--season-${SEASONS[month]})`);
+      el.prepend(dot);
+    });
+  }
+</script>
+
+<style>
+  .panel {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    padding: clamp(0px, 4vh, 48px) clamp(0px, 4vw, 56px);
+  }
+  .panel[hidden] { display: none; }
+
+  .panel__scrim {
+    position: absolute;
+    inset: 0;
+    background: var(--scrim);
+    backdrop-filter: blur(3px) saturate(0.9);
+    opacity: 0;
+    transition: opacity 260ms ease;
+  }
+
+  .panel__sheet {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(270px, 0.85fr);
+    gap: clamp(20px, 3.2vw, 52px);
+    align-items: start;
+    width: min(1080px, 100%);
+    max-height: 100%;
+    overflow: auto;
+    padding: clamp(22px, 3.4vw, 48px);
+    background: var(--paper);
+    border-radius: 2px;
+    box-shadow: var(--lift);
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+    transition: opacity 280ms ease, transform 320ms var(--ease);
+  }
+
+  .panel.is-open .panel__scrim { opacity: 1; }
+  .panel.is-open .panel__sheet { opacity: 1; transform: none; }
+
+  .panel__close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    color: var(--ink-soft);
+    background: none;
+    border: 0;
+    cursor: pointer;
+    transition: color 160ms ease, transform 160ms ease;
+  }
+  .panel__close:hover { color: var(--ink); transform: rotate(90deg); }
+
+  /* ---- the frame ---------------------------------------------------- */
+
+  .panel__plate {
+    position: relative;
+    /* Stable for a viewport, independent of which photograph is showing. */
+    --frame-h: clamp(300px, 54vh, 600px);
+  }
+
+  .panel__mat {
+    display: grid;
+    /* One explicit cell, not an auto row. An auto row is sized by the
+       photograph, which makes the photograph's own `max-height: 100%`
+       circular — so it resolves to none and a tall portrait overflows the
+       frame. A definite `1fr` of a fixed-height mat is what makes the mat
+       hold its shape. */
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center;
+    height: var(--frame-h);
+    overflow: hidden;
+    background: var(--paper-sunk);
+    /* a horizontal drag pages; a vertical one still scrolls the sheet */
+    touch-action: pan-y;
+  }
+
+  /* No photograph at all: the frame would be a large empty box, so it isn't. */
+  .panel__plate[data-empty] { --frame-h: auto; }
+  .panel__plate[data-empty] .panel__mat { min-height: 180px; }
+
+  /* The zoom stage: exactly the mat's box, so scaling it about its centre
+     scales the centred photograph about its centre. src/lib/plateViewer.ts
+     writes the transform; nothing else touches it. */
+  .panel__zoom {
+    grid-area: 1 / 1;
+    place-self: stretch;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center;
+    transition: transform 230ms var(--ease);
+  }
+
+  .panel__mat img {
+    grid-area: 1 / 1;
+    /* a mouse drag should page, not start a native image drag */
+    user-select: none;
+    -webkit-user-drag: none;
+    width: auto;
+    height: auto;
+    /* never past the pixels we built, never past the frame */
+    max-width: min(100%, var(--iw, 100%));
+    max-height: min(100%, var(--ih, 100%));
+    opacity: 0;
+    transform: translateX(calc(var(--dir, 0) * 18px));
+    transition: opacity 190ms var(--ease), transform 300ms var(--ease);
+  }
+  .panel__mat img[hidden] { display: none; }
+  .panel__mat img.is-front { opacity: 1; transform: none; }
+
+  .panel__noimg {
+    grid-area: 1 / 1;
+    margin: 0;
+    padding: 4.5rem 1rem;
+    font-size: var(--fs-small);
+    font-style: italic;
+    letter-spacing: 0.02em;
+    color: var(--ink-faint);
+  }
+
+  /* ---- paging ------------------------------------------------------- */
+
+  .panel__nav {
+    position: absolute;
+    top: 50%;
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 58px;
+    padding: 0;
+    color: var(--ink);
+    background: var(--paper);
+    border: 0;
+    border-radius: 2px;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(-50%);
+    transition: opacity var(--dur) var(--ease);
+  }
+  .panel__nav[hidden] { display: none; }
+  .panel__nav--prev { left: 10px; }
+  .panel__nav--next { right: 10px; }
+
+  /* Quiet until you look at it. */
+  .panel__plate:hover .panel__nav,
+  .panel__plate:focus-within .panel__nav { opacity: 0.66; }
+  .panel__plate .panel__nav:hover,
+  .panel__plate .panel__nav:focus-visible { opacity: 0.94; }
+
+  /* Touch has no hover, so the arrows sit there, fainter. */
+  @media (hover: none) {
+    .panel__nav,
+    .panel__plate:hover .panel__nav { opacity: 0.58; }
+  }
+
+  .panel__count {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    margin: 0;
+    padding: 0.18em 0.55em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-label);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-soft);
+    background: var(--paper);
+    border-radius: 2px;
+    opacity: 0.74;
+    pointer-events: none;
+  }
+  .panel__count[hidden] { display: none; }
+
+  /* ---- zoom ---------------------------------------------------------- */
+
+  /* Mirrors the counter, bottom-left. Quiet until you look at the plate.
+     One row, so the link cannot cover the magnifier and neither of them can
+     reach the counter in the opposite corner. Each child hides itself with
+     [hidden] (display: none), so the row closes up rather than leaving a gap
+     when only one of the two applies to this plate. */
+  .panel__tools {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .panel__zoombtn {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    color: var(--ink-soft);
+    background: var(--paper);
+    border: 0;
+    border-radius: 2px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .panel__zoombtn[hidden] { display: none; }
+  .panel__plate:hover .panel__zoombtn,
+  .panel__plate:focus-within .panel__zoombtn { opacity: 0.74; }
+  .panel__zoombtn:hover,
+  .panel__zoombtn:focus-visible { opacity: 0.96; color: var(--ink); }
+  .panel__zoombtn[aria-pressed='true'] { opacity: 0.9; }
+  /* the magnifier loses its upright stroke and becomes a minus */
+  .panel__zoombtn[aria-pressed='true'] .panel__zoomplus { display: none; }
+
+  @media (hover: none) {
+    .panel__zoombtn,
+    .panel__plate:hover .panel__zoombtn { opacity: 0.62; }
+  }
+
+  /* ---- the original -------------------------------------------------- */
+
+  /* Set like the counter it faces across the frame — the same paper chip, the
+     same micro sans — because it is the same register of thing: a small true
+     statement about the file you are looking at. It is a link rather than a
+     button and carries its weight in words, so it never pretends to be a
+     third icon whose meaning you have to guess. */
+  .panel__orig {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    height: 34px;
+    padding: 0 0.7em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-label);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-soft);
+    background: var(--paper);
+    border-radius: 2px;
+    text-decoration: none;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .panel__orig[hidden] { display: none; }
+  .panel__plate:hover .panel__orig,
+  .panel__plate:focus-within .panel__orig { opacity: 0.74; }
+  .panel__orig:hover,
+  .panel__orig:focus-visible { opacity: 0.96; color: var(--ink); }
+
+  /* the one mark that says "this leaves the page" */
+  .panel__origout { opacity: 0.7; }
+
+  @media (hover: none) {
+    .panel__orig,
+    .panel__plate:hover .panel__orig { opacity: 0.62; }
+  }
+
+  .panel__plate[data-zoomable] .panel__mat { cursor: zoom-in; }
+  .panel__plate[data-zoomed] .panel__mat {
+    cursor: grab;
+    /* while zoomed the drag is a pan in both axes, so the browser must not
+       claim the vertical one for scrolling the sheet */
+    touch-action: none;
+  }
+  .panel__plate[data-zoomed] .panel__mat:active { cursor: grabbing; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .panel__mat img {
+      transition: none;
+      transform: none;
+    }
+    /* zoom still works; it just arrives rather than travels */
+    .panel__zoom { transition: none; }
+  }
+
+  /* ---- the guide column --------------------------------------------- */
+
+  .panel__guide { padding-top: 0.25rem; }
+
+  .panel__date {
+    /* inline-block so an <a> still takes the bottom margin the <p> did */
+    display: inline-block;
+    margin: 0 0 0.55rem;
+    font-family: var(--sans);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-decoration: none;
+  }
+
+  /* No date at all (the 43 unphotographed birds, if a view ever puts one in
+     its payload): the line takes no room, as the empty <p> before it did. */
+  .panel__date:empty { display: none; }
+
+  /* The way out of the bird and into the day it was found — the same
+     hairline-under-the-words a link wears everywhere else on the site
+     (.day__up, .cab__clear). Only on [href]: no day, no affordance. */
+  .panel__date[href] { border-bottom: 1px solid var(--rule); }
+  .panel__date[href]:hover {
+    color: var(--ink-soft);
+    border-bottom-color: var(--ink-soft);
+  }
+
+  .panel__name {
+    margin: 0;
+    font-size: var(--fs-name);
+    font-weight: 400;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+
+  /* The bird's other name, given the weight of a name. It was 0.86rem grey
+     sans sitting under a 2rem serif, which read as a translator's note; it is
+     now 1.25rem of a Song-style face in --ink-soft (6.84:1 on --paper,
+     7.01:1 on the panel's --paper-raised), the CJK counterpart of the serif
+     above it. No vertical setting here — the guide column is a column of
+     running text, and the mat's margin is a different width for every
+     photograph. The bird page, where the margin is fixed, sets it upright. */
+  .panel__gloss {
+    margin: 0.35rem 0 0;
+    font-family: var(--serif-cjk);
+    font-size: var(--fs-lg);
+    line-height: 1.2;
+    letter-spacing: 0.12em;
+    color: var(--ink-soft);
+  }
+  .panel__gloss:empty { display: none; }
+
+  /* The date the bird was first seen, with a dot in that date's own season
+     colour (see .season-dot in global.css §4). --s is written by the script
+     below; with no script the dot never appears at all, because panel.ts
+     rewrites this element's text on every open and a server-rendered mark
+     could not survive it. */
+  .panel__date .season-dot { margin-right: 0.5em; }
+
+  .panel__genus {
+    margin: 0.35rem 0 1.4rem;
+    font-size: var(--fs-body);
+    font-style: italic;
+    color: var(--ink-soft);
+  }
+
+  .panel__desc {
+    margin: 0 0 1.6rem;
+    max-width: 38ch;
+    font-size: 0.98rem;
+    color: var(--ink-soft);
+  }
+  .panel__desc:empty { display: none; }
+
+  .panel__facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.5rem 1.4rem;
+    margin: 0;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--rule-soft);
+  }
+  /* :global — these rows are injected at runtime by src/lib/panel.ts, so they
+     never carry Astro's scoping attribute. */
+  .panel__facts :global(dt) {
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-top: 0.22em;
+  }
+  .panel__facts :global(dd) {
+    margin: 0;
+    font-size: var(--fs-base);
+  }
+  /* "That day" — the birds found beside this one. It is the last row of the
+     field marks on purpose: it shares the <dl>'s two columns and its type, so
+     it adds a line and no furniture, and on one column (≤760px) it lands
+     below everything rather than between the photograph and the marks.
+     src/lib/panel.ts writes it, hence :global. */
+  .panel__facts :global(dd.panel__with) { color: var(--ink-soft); }
+  .panel__facts :global(dd.panel__with .with) {
+    color: var(--ink);
+    text-decoration: none;
+    /* A name wraps between names, never inside one: a hyphenated bird broken
+       over two lines takes its hairline with it and reads as two links.
+       The longest English name in the record is 26 characters, which still
+       fits the guide column at 320px. */
+    white-space: nowrap;
+    /* the site's one link mark: a hairline under the words, as on
+       .panel__date[href], .day__up and .cab__clear */
+    border-bottom: 1px solid var(--rule);
+    transition: border-color 160ms ease;
+  }
+  .panel__facts :global(dd.panel__with .with:hover) { border-bottom-color: var(--ink); }
+
+  /* The 19 birds that were the only new bird of their day. Stated, not
+     hidden — the same italic --ink-faint the empty mat uses for a
+     photograph that was never taken. */
+  .panel__facts :global(dd.panel__alone) {
+    font-style: italic;
+    color: var(--ink-faint);
+  }
+
+  .panel__facts :global(dd .swatch) {
+    display: inline-block;
+    width: 0.52em;
+    height: 0.52em;
+    margin-right: 0.45em;
+    border-radius: 50%;
+    background: var(--dot, var(--ink-faint));
+    vertical-align: 0.06em;
+  }
+
+  @media (max-width: 760px) {
+    .panel { padding: 0; }
+    .panel__sheet {
+      grid-template-columns: 1fr;
+      width: 100%;
+      height: 100%;
+      max-height: 100%;
+      border-radius: 0;
+      padding: 18px 20px 48px;
+      gap: 22px;
+    }
+    .panel__plate { --frame-h: clamp(220px, 42vh, 420px); }
+    .panel__nav { width: 40px; height: 52px; }
+  }
+</style>
