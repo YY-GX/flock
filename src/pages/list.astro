@@ -123,8 +123,8 @@ const madeOn =
               forty-three reads as a mistake. */}
           <BirdThumb
             bird={row.bird}
-            size={168}
-            shape="portrait"
+            size={224}
+            shape="landscape"
             genus
             gloss
             eager={i < 12}
@@ -212,7 +212,7 @@ const madeOn =
   .cabinet__grid,
   .cabinet__ghostgrid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(206px, 1fr));
     gap: clamp(18px, 2.2vw, 32px) clamp(14px, 1.8vw, 26px);
   }
 
@@ -352,7 +352,7 @@ const madeOn =
 
   @media (max-width: 480px) {
     .cabinet__grid,
-    .cabinet__ghostgrid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+    .cabinet__ghostgrid { grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); }
   }
 </style>
 

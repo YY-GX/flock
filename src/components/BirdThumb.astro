@@ -142,8 +142,19 @@ interface Props {
   bird: Bird;
   /** Edge of the picture box in CSS px. Default 160. */
   size?: number;
-  /** 'square' (1:1), 'circle' (1:1, round), 'portrait' (3:4), 'free' (natural). */
-  shape?: 'square' | 'circle' | 'portrait' | 'free';
+  /**
+   * 'square' (1:1), 'circle' (1:1, round), 'portrait' (3:4),
+   * 'landscape' (4:3), 'free' (natural).
+   *
+   * ⚠️ Pick the one the PHOTOGRAPHS are, not the one the layout wants. A
+   * fixed-ratio plate is cropped at build, so the ratio decides how much of
+   * each frame survives: of the 1,307 photographs here 1,056 are landscape
+   * and the median aspect is 1.45, so a 3:4 plate keeps 56.9% of the width
+   * on average and 959 of them lose more than 40% of it. That is a bird with
+   * its tail cut off, however good the focal point is. 4:3 keeps 90.8% and
+   * only 28 lose more than 40%.
+   */
+  shape?: 'square' | 'circle' | 'portrait' | 'landscape' | 'free';
   /** Show the English name under the picture. Default true. */
   name?: boolean;
   /** Also show the scientific name, italic. Default false. */
@@ -208,7 +219,8 @@ if (asset) {
      works on; ImageMetadata does not always agree. Prefer focal's. */
   const srcW = focal?.w || asset.width;
   const srcH = focal?.h || asset.height;
-  const boxRatio = shape === 'portrait' ? 3 / 4 : shape === 'free' ? 0 : 1;
+  const boxRatio =
+    shape === 'portrait' ? 3 / 4 : shape === 'landscape' ? 4 / 3 : shape === 'free' ? 0 : 1;
   const edge = Math.round(size * density);
 
   if (boxRatio && srcW && srcH) {
@@ -358,6 +370,7 @@ const label = genus && bird.genus ? `${english}, ${bird.genus}` : english;
     background: var(--paper-sunk);
   }
   .thumb--portrait .thumb__plate { aspect-ratio: 3 / 4; }
+  .thumb--landscape .thumb__plate { aspect-ratio: 4 / 3; }
   .thumb--free .thumb__plate { aspect-ratio: auto; background: none; }
   .thumb--circle .thumb__plate { border-radius: 50%; }
 
@@ -365,7 +378,8 @@ const label = genus && bird.genus ? `${english}, ${bird.genus}` : english;
      and the faintest lift underneath. Circles (pins, bubbles, the flock)
      are marks, not prints, and stay bare. */
   .thumb--square .thumb__plate,
-  .thumb--portrait .thumb__plate {
+  .thumb--portrait .thumb__plate,
+  .thumb--landscape .thumb__plate {
     box-shadow: var(--plate-edge), var(--plate-lift);
   }
 
