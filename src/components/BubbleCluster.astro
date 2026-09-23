@@ -14,6 +14,7 @@
 import BirdThumb from './BirdThumb.astro';
 import type { Bird } from '../lib/types';
 import type { Disc, Group } from '../lib/groupsView';
+import { LABEL_GAP } from '../lib/groupsView';
 import { withBase } from '../lib/paths';
 
 interface Props {
@@ -26,15 +27,13 @@ interface Props {
   thumb: number;
   /** Position and size, as CSS custom properties. */
   style?: string;
-  /** Put the name inside the clump. True for the few bubbles big enough. */
-  inside?: boolean;
-  /** Still wide enough for that on a phone's smaller stage. */
-  roomy?: boolean;
 }
 
-const { group, reps, discs, thumb, style = '', inside = false, roomy = false } = Astro.props;
+const { group, reps, discs, thumb, style = '' } = Astro.props;
 
-const styleAttr = [`--t: ${group.colour}`, style].filter(Boolean).join('; ');
+const styleAttr = [`--t: ${group.colour}`, `--label-gap: ${LABEL_GAP}px`, style]
+  .filter(Boolean)
+  .join('; ');
 const plural = group.count === 1 ? 'bird' : 'birds';
 ---
 
@@ -66,13 +65,7 @@ const plural = group.count === 1 ? 'bird' : 'birds';
     }
   </span>
 
-  <span
-    class:list={[
-      'bubble__label',
-      inside && 'bubble__label--in',
-      inside && roomy && 'bubble__label--roomy',
-    ]}
-  >
+  <span class="bubble__label">
     <span class="bubble__name">{group.label}</span>
     <span class="bubble__count">{group.count}</span>
   </span>
@@ -144,9 +137,19 @@ const plural = group.count === 1 ? 'bird' : 'birds';
     transform: translate(-50%, -50%) scale(1.06);
   }
 
+  /* The caption: under the rim, on the paper, for all nine — the same place
+     a BirdThumb wears its name. It used to be a paper plate stamped across
+     the middle of the three biggest clumps (the only spot outside them
+     that was not a neighbour's photograph), which was legible and ugly.
+     Now the packing itself keeps this box clear: groupsView.ts treats the
+     caption as part of the bubble's body, so nothing else settles on it,
+     and a name never lies on a photograph. No plate, no halo — the ink
+     sits on the page's own ground, where --ink and --ink-faint carry the
+     ratios they were drawn for. `--label-gap` is LABEL_GAP from
+     groupsView.ts, written by the component so the two cannot drift. */
   .bubble__label {
     position: absolute;
-    top: 100%;
+    top: calc(100% + var(--label-gap, 6px));
     left: 50%;
     /* --lx is set by the page's script when a label centred on its bubble
        would otherwise start off the left edge of the stage (it is wider
@@ -157,7 +160,7 @@ const plural = group.count === 1 ? 'bird' : 'birds';
     display: block;
     /* An absolutely positioned box shrinks to the space left of it, which
        for a small bubble is half its width — one word per line. Ask for
-       max-content and let max-width do the wrapping: at least 130% of a
+       max-content and let max-width do the wrapping: at least 190% of a
        small bubble so short names stay on one line — two lines under a
        little bubble reach further into its neighbour than a wide single
        line does — and never more than 20ch. */
@@ -165,30 +168,9 @@ const plural = group.count === 1 ? 'bird' : 'birds';
     max-width: min(max(190%, 12ch), 20ch);
     text-align: center;
     line-height: 1.15;
-    /* A plate, not a halo. The bubbles jostle, so a label lies over a
-       neighbour's photographs often enough, and the biggest three lie over
-       their own. A text-shadow is a blur: it spreads paper thinly and
-       photographic detail walks straight through it — measured worst
-       pixels of 1.0:1 under every name that had one, and in dark it drew a
-       near-black glow around cream text over a bright wing.
-       Paper is a real surface. On it a name and a count carry exactly the
-       ratios the tokens were drawn for — 15.3:1 and 4.9:1 in light, 15.0:1
-       and 5.5:1 in dark — and no photograph can change that. Over the
-       page's own paper, which is where six of the nine sit, the plate is
-       invisible. Even 5% of translucency costs the count its AA margin
-       over a bright wing, so it stays opaque. */
-    padding: 0.2em 0.5em 0.26em;
-    border-radius: 2px;
-    background: var(--paper);
-  }
-
-  /* the three biggest bubbles wear their name in the middle, the way a
-     packed-bubble chart does: outside there is nowhere to put it that is
-     not somebody else's photograph */
-  .bubble__label--in {
-    top: 50%;
-    transform: translate(-50%, -50%);
-    max-width: 82%;
+    /* a hair of side padding, so the box the packing keeps clear is the
+       ink plus a little air, not the ink's exact edge */
+    padding: 0 0.3em;
   }
 
   .bubble__name {
@@ -228,22 +210,14 @@ const plural = group.count === 1 ? 'bird' : 'birds';
       --y: var(--yt);
       --d: var(--dt);
     }
+    /* Not narrower than this: wrapping "Wading & Shorebirds 28" (168px on
+       one line) at 14ch was tried and made the column pack *worse* — a
+       39px-tall caption is more in the way than a wide 20px one. */
     .bubble__label {
       max-width: min(max(190%, 12ch), 18ch);
     }
     .bubble__name {
       font-size: var(--fs-small);
-    }
-
-    /* A phone's bubbles are about half as wide, and a plate can only be as
-       wide as the bubble it lies on. The two biggest still hold their name;
-       the third puts it back underneath, where the default already is. */
-    .bubble__label--in:not(.bubble__label--roomy) {
-      top: 100%;
-      transform: translateX(calc(-50% + var(--lx, 0px)));
-    }
-    .bubble__label--roomy {
-      max-width: 82%;
     }
   }
 </style>

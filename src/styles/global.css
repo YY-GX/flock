@@ -181,6 +181,21 @@
      browser picks Simplified glyph forms. */
   --serif-cjk: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC",
     "SimSun", "Songti TC", serif;
+  /* The brush. One slot only — the vertical inscription beside the plate
+     on /birds/<slug> — where a Song face read as a typeset caption and the
+     owner wanted a hand. Ma Shan Zheng (马善政毛笔楷书, SIL OFL 1.1), a
+     brush-written 楷: regular script, the register of a naturalist's
+     inscription, not a running or grass hand nobody can read a bird's name
+     in. Self-hosted and subset to exactly the 278 characters the Chinese
+     names use (§3 below). The face lacks 13 of them — all bird radicals,
+     䴓 䴕 䴘 䴙 鵟 鸏 鸮 鸻 鹀 鹟 鹮 𫛭 and 擬, on 44 of the 238 names — so the
+     second face is LXGW WenKai (霞鹜文楷, OFL 1.1), a pen 楷, so a grebe's
+     䴙䴘 in WenKai beside a brush 斑嘴巨 reads as one hand, where the Song
+     glyph it used to fall to did not. Then --serif-cjk, for any name added
+     in Notion after the last subset.
+     WenKai carries all 278, not just the 13, so the switch to the quieter,
+     fully consistent face is this one line: drop "Ma Shan Zheng Names". */
+  --brush-cjk: "Ma Shan Zheng Names", "LXGW WenKai Names", var(--serif-cjk);
 
   /* type scale — sans sizes are for labels/meta, serif for names + prose */
   --fs-micro: 0.68rem;  /* eyebrows, dt labels, axis ticks */
@@ -398,6 +413,35 @@
 @font-face {
   font-family: "Bodoni Moda Display";
   src: url("/fonts/bodoni-moda-display.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * The brush for the vertical inscription (--brush-cjk). Ma Shan Zheng, SIL
+ * OFL 1.1 (public/fonts/ma-shan-zheng-OFL.txt), subset from 5.9 MB to the
+ * 265 of the 278 name characters it has: 123 KB, brush outlines are heavy.
+ * LXGW WenKai, OFL 1.1 (public/fonts/lxgw-wenkai-OFL.txt, whose additional
+ * permission expressly allows web subsets under the reserved name), cut to
+ * all 278: 75 KB. Font fallback is lazy, so a browser fetches WenKai only
+ * on the 44 bird pages whose name has a glyph the brush lacks. Both are
+ * reached only from .bird__inscription, which is display:none under 760px,
+ * so a phone never downloads either. `python3 scripts/subset-cjk.py` recuts
+ * both from birds.json — run it after a sync adds a name with a new
+ * character, or that character falls through to --serif-cjk (legible, just
+ * Song).
+ */
+@font-face {
+  font-family: "Ma Shan Zheng Names";
+  src: url("/fonts/ma-shan-zheng-names.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "LXGW WenKai Names";
+  src: url("/fonts/lxgw-wenkai-names.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;

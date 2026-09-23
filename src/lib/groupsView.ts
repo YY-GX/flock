@@ -171,12 +171,79 @@ export function groupTransitionName(group: Group | string): string {
 export interface PackNode {
   /** Radius in px, proportional to sqrt(count): area tells the truth. */
   r: number;
-  /** Breathing room outside r, so labels and floats never collide. */
+  /** Breathing room outside r, so floats never quite touch. */
   pad: number;
   x: number;
   y: number;
   vx: number;
   vy: number;
+  /** The caption under the bubble, if the pack is to keep room for it. */
+  label?: LabelBox;
+}
+
+/** A caption's box in px: the name and the count that hang under a bubble. */
+export interface LabelBox {
+  w: number;
+  h: number;
+}
+
+/* Every bubble wears its name *under* its rim, the way a BirdThumb wears
+   its name under the picture — one idiom for all nine, and the name never
+   lies on a photograph. That only holds if the packing knows the caption
+   is there, so a node's body is its circle plus a row of discs covering
+   the caption, and collisions, walls and the compass corner all see both.
+   LABEL_GAP is the rim-to-caption distance; BubbleCluster.astro's
+   `.bubble__label { top }` must say the same number. */
+export const LABEL_GAP = 6;
+const LABEL_AIR = 3; // clear paper a caption keeps round itself
+/* How far a caption may hang below the stage: the wrap keeps this much
+   padding under it for exactly that (groups.astro .stage-wrap). */
+const LABEL_OVERHANG = 24;
+
+interface Body {
+  x: number;
+  y: number;
+  r: number;
+}
+
+/** The circle itself, then discs laid along the caption under it. */
+function bodies(n: PackNode, out: Body[]): Body[] {
+  out.length = 0;
+  out.push({ x: n.x, y: n.y, r: n.r + n.pad });
+  const l = n.label;
+  if (l && l.w > 0 && l.h > 0) {
+    const rr = l.h / 2 + LABEL_AIR;
+    const cy = n.y + n.r + LABEL_GAP + l.h / 2;
+    const span = Math.max(0, l.w - l.h);
+    const k = span > 0 ? Math.ceil(span / l.h) + 1 : 1;
+    for (let i = 0; i < k; i++) {
+      out.push({ x: n.x - span / 2 + (k > 1 ? (span * i) / (k - 1) : 0), y: cy, r: rr });
+    }
+  }
+  return out;
+}
+
+/** How far below its centre a node reaches, caption included, for the walls. */
+function reachDown(n: PackNode): number {
+  const l = n.label;
+  return n.r + (l ? Math.max(0, LABEL_GAP + l.h - LABEL_OVERHANG) : 0);
+}
+
+/**
+ * Roughly the caption BubbleCluster.astro draws under a bubble of radius
+ * `r`, for the build-time pack, which has no DOM to measure. The browser
+ * measures the real one and re-packs; this only has to be near enough that
+ * nothing jumps far on load. Mirrors the component's type: `--fs-base`
+ * serif name (`--fs-small` on a phone), `--fs-micro` count, wrapping at
+ * min(max(190%, 12ch), 20ch) — 18ch on a phone.
+ */
+export function estimateLabel(name: string, count: number, r: number, phone = false): LabelBox {
+  const fs = phone ? 13.76 : 15.2;
+  const ch = fs * 0.5;
+  const text = name.length * fs * 0.48 + fs * 0.45 + String(count).length * fs * 0.45;
+  const maxW = Math.min(Math.max(1.9 * 2 * r, 12 * ch), (phone ? 18 : 20) * ch);
+  const lines = Math.max(1, Math.ceil(text / maxW));
+  return { w: Math.min(text, maxW), h: (8 + 19.5 * lines) * (fs / 15.2) };
 }
 
 /* Tuned against the real nine: 109 / 59 / 28 / 13 / 9 / 6 / 6 / 5 / 3.
@@ -185,7 +252,13 @@ export interface PackNode {
    which cannot import this module — and two different answers on one load
    is a layout shift. See the note over that script. */
 export const FILL_WIDE = 0.4; // share of the stage the circles cover, landscape
-export const FILL_TALL = 0.46; // a phone can afford to be fuller
+/* 0.46 before the captions were packed. A phone's column has to hold nine
+   captions as well as nine bubbles *and* the compass's 138px corner: run
+   over 380x{760..1060} at 390x740 and 360x640 with the real caption sizes,
+   0.32 is the fill that packs both with no caption on anything (0.0px /
+   0.2px worst); 0.36 and 0.40 leave 5–48px overlaps at one height or the
+   other. Perching is still 216px across a 328px stage. */
+export const FILL_TALL = 0.32;
 export const CAP = 0.44; // no bubble wider than this share of the short edge
 const GRAV = 1.35; // pull toward the middle, px per frame^2 at full alpha
 const DAMP = 0.8;
@@ -211,9 +284,9 @@ export function radiiFor(counts: number[], w: number, h: number): { r: number; p
 
   return counts.map((n) => {
     const r = R * Math.sqrt(n / max);
-    // the small ones carry their label underneath, and a short label is
-    // still wider than a small bubble, so they ask for a lot more room
-    return { r, pad: R * (r < R * 0.42 ? 0.21 : 0.05) };
+    // the caption's room is asked for by the caption itself (see bodies);
+    // this is only so two rims never quite touch
+    return { r, pad: R * 0.05 };
   });
 }
 
@@ -243,33 +316,58 @@ export function avoid(nodes: PackNode[], box: KeepOut | null): void {
   if (!box || box.x1 <= box.x0 || box.y1 <= box.y0) return;
 
   for (const n of nodes) {
-    // nearest point of the rectangle to this centre
-    const cx = Math.max(box.x0, Math.min(box.x1, n.x));
-    const cy = Math.max(box.y0, Math.min(box.y1, n.y));
-    const inside = cx === n.x && cy === n.y;
+    // the circle and the caption both have to clear it; each body that
+    // touches moves the whole node, and the next body is checked where
+    // the node now is
+    let moved = false;
+    const B = bodies(n, BA);
+    for (let k = 0; k < B.length; k++) {
+      const b = B[k];
+      // nearest point of the rectangle to this body's centre
+      const cx = Math.max(box.x0, Math.min(box.x1, b.x));
+      const cy = Math.max(box.y0, Math.min(box.y1, b.y));
+      const inside = cx === b.x && cy === b.y;
+      let sx = 0;
+      let sy = 0;
 
-    if (!inside) {
-      const dx = n.x - cx;
-      const dy = n.y - cy;
-      const d = Math.hypot(dx, dy);
-      if (d >= n.r || d < 1e-6) continue;
-      n.x = cx + (dx / d) * n.r;
-      n.y = cy + (dy / d) * n.r;
-    } else if (box.x1 - n.x < n.y - box.y0) {
-      n.x = box.x1 + n.r; // out to the right
-    } else {
-      n.y = box.y0 - n.r; // out over the top
+      if (!inside) {
+        const dx = b.x - cx;
+        const dy = b.y - cy;
+        const d = Math.hypot(dx, dy);
+        if (d >= b.r || d < 1e-6) continue;
+        sx = cx + (dx / d) * b.r - b.x;
+        sy = cy + (dy / d) * b.r - b.y;
+      } else if (box.x1 - b.x < b.y - box.y0) {
+        sx = box.x1 + b.r - b.x; // out to the right
+      } else {
+        sy = box.y0 - b.r - b.y; // out over the top
+      }
+      n.x += sx;
+      n.y += sy;
+      moved = true;
+      bodies(n, BA); // refills B in place: the rest of the row, where it is now
     }
-    n.vx = 0;
-    n.vy = 0;
+    if (moved) {
+      n.vx = 0;
+      n.vy = 0;
+    }
   }
 }
+
+/* scratch, so a step allocates nothing per pair */
+const BA: Body[] = [];
+const BB: Body[] = [];
 
 /** Deterministic sub-pixel jitter, so symmetric seeds still break apart. */
 const wobble = (i: number) => ((Math.sin((i + 1) * 12.9898) * 43758.5453) % 1) * 2 - 1;
 
 /** A phyllotaxis seed: biggest first at the middle, the rest spiralling out. */
-export function seedNodes(sizes: { r: number; pad: number }[], w: number, h: number): PackNode[] {
+export function seedNodes(
+  sizes: { r: number; pad: number }[],
+  w: number,
+  h: number,
+  labels?: (LabelBox | undefined)[],
+): PackNode[] {
   const n = sizes.length || 1;
   return sizes.map((s, i) => {
     const rho = Math.sqrt((i + 0.35) / n);
@@ -281,6 +379,7 @@ export function seedNodes(sizes: { r: number; pad: number }[], w: number, h: num
       y: h / 2 + Math.sin(a) * rho * h * 0.33 + wobble(i + 99) * 2,
       vx: 0,
       vy: 0,
+      label: labels?.[i],
     };
   });
 }
@@ -319,25 +418,38 @@ export function relaxStep(nodes: PackNode[], w: number, h: number, alpha = 1): n
 function collide(nodes: PackNode[]): void {
   for (let i = 0; i < nodes.length; i++) {
     const a = nodes[i];
+    const wa0 = a.r * a.r;
     for (let j = i + 1; j < nodes.length; j++) {
       const b = nodes[j];
-      let dx = b.x - a.x;
-      let dy = b.y - a.y;
-      const min = a.r + a.pad + b.r + b.pad;
-      let d = Math.hypot(dx, dy);
-      if (d >= min) continue;
-      if (d < 1e-6) {
-        // exactly coincident: split them along a fixed, arbitrary axis
-        dx = Math.cos(i * GOLDEN);
-        dy = Math.sin(i * GOLDEN);
-        d = 1;
+      // every body of a against every body of b: circle on circle, circle
+      // on caption, caption on caption. Whatever touched, the nodes move.
+      const wa = (b.r * b.r) / (wa0 + b.r * b.r);
+      const A = bodies(a, BA);
+      const B = bodies(b, BB);
+      for (const pa of A) {
+        for (const pb of B) {
+          let dx = pb.x - pa.x;
+          let dy = pb.y - pa.y;
+          const min = pa.r + pb.r;
+          let d = Math.hypot(dx, dy);
+          if (d >= min) continue;
+          if (d < 1e-6) {
+            // exactly coincident: split them along a fixed, arbitrary axis
+            dx = Math.cos(i * GOLDEN);
+            dy = Math.sin(i * GOLDEN);
+            d = 1;
+          }
+          const push = ((min - d) * SEP) / d;
+          a.x -= dx * push * wa;
+          a.y -= dy * push * wa;
+          b.x += dx * push * (1 - wa);
+          b.y += dy * push * (1 - wa);
+          // the bodies moved with their nodes; the rest of this pair's
+          // checks are against where they are now
+          for (const p of A) (p.x -= dx * push * wa), (p.y -= dy * push * wa);
+          for (const p of B) (p.x += dx * push * (1 - wa)), (p.y += dy * push * (1 - wa));
+        }
       }
-      const push = ((min - d) * SEP) / d;
-      const wa = (b.r * b.r) / (a.r * a.r + b.r * b.r);
-      a.x -= dx * push * wa;
-      a.y -= dy * push * wa;
-      b.x += dx * push * (1 - wa);
-      b.y += dy * push * (1 - wa);
     }
   }
 }
@@ -354,30 +466,56 @@ function integrate(nodes: PackNode[], w: number, h: number, damp: number): numbe
     n.vy *= damp;
 
     const lo = n.r + MARGIN;
-    if (n.x < lo) (n.x = lo), (n.vx = 0);
-    if (n.x > w - lo) (n.x = w - lo), (n.vx = 0);
+    /* Sideways the caption counts too: a small bubble's caption is wider
+       than the bubble, and if the circle alone were held off the wall the
+       page would slide the drawn caption back in (--lx) while the pack
+       still saw it centred — the drawn one then lay on a neighbour the
+       pack had cleared. Keep the whole caption on the stage and the two
+       agree. */
+    const side = Math.max(n.r, (n.label?.w ?? 0) / 2) + MARGIN;
+    const down = reachDown(n) + MARGIN; // the caption stays on the stage too
+    if (n.x < side) (n.x = side), (n.vx = 0);
+    if (n.x > w - side) (n.x = w - side), (n.vx = 0);
+    if (n.y > h - down) (n.y = h - down), (n.vy = 0);
     if (n.y < lo) (n.y = lo), (n.vy = 0);
-    if (n.y > h - lo) (n.y = h - lo), (n.vy = 0);
 
     moved = Math.max(moved, Math.abs(n.x - px) + Math.abs(n.y - py));
   }
   return moved;
 }
 
-/** Run the simulation to a standstill. Used at build time and on resize. */
-export function settle(nodes: PackNode[], w: number, h: number, steps = 500): PackNode[] {
+/**
+ * Run the simulation to a standstill. Used at build time and on resize.
+ * Pass the compass's corner as `keep` and it is cleared on every step, so
+ * the pack settles *around* it; clearing it once afterwards instead shoved
+ * whatever had settled there onto its neighbours, which under reduced
+ * motion — where this is the only frame — was a caption on a caption.
+ */
+export function settle(
+  nodes: PackNode[],
+  w: number,
+  h: number,
+  steps = 500,
+  keep: KeepOut | null = null,
+): PackNode[] {
   let alpha = 1;
   for (let i = 0; i < steps; i++) {
     const moved = relaxStep(nodes, w, h, alpha);
+    avoid(nodes, keep);
     alpha *= 0.99;
     if (i > 80 && moved < 0.02) break;
   }
   return nodes;
 }
 
-/** Seed and settle in one call. */
-export function packGroups(counts: number[], w: number, h: number): PackNode[] {
-  return settle(seedNodes(radiiFor(counts, w, h), w, h), w, h);
+/** Seed and settle in one call. Pass the captions so the pack keeps room for them. */
+export function packGroups(
+  counts: number[],
+  w: number,
+  h: number,
+  labels?: (LabelBox | undefined)[],
+): PackNode[] {
+  return settle(seedNodes(radiiFor(counts, w, h), w, h, labels), w, h);
 }
 
 /* ---------------- staying alive ---------------- */

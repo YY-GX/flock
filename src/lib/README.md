@@ -516,7 +516,7 @@ unrecognised maps to `--t-other`.
 | Ink | `--ink` `--ink-soft` `--ink-faint` |
 | Rules | `--rule` `--rule-soft` (hairlines — **no card borders, no boxes**) |
 | Depth | `--lift` `--lift-sm` `--scrim` `--plate-edge` `--plate-lift` (the last two only on `BirdThumb` plates) |
-| Faces | `--serif` (names, prose) `--sans` (labels, numbers, ticks) |
+| Faces | `--serif` (names, prose) `--sans` (labels, numbers, ticks) `--display-serif` (`.display` only) `--serif-cjk` (Chinese glosses) `--brush-cjk` (the vertical inscription on `/birds/<slug>` only) |
 | Sizes | `--fs-micro` `--fs-tiny` `--fs-small` `--fs-base` `--fs-body` `--fs-lg` `--fs-name` `--fs-display` |
 | Tracking | `--track-wide` (eyebrows) `--track-label` (dt labels) |
 | Space | `--gutter` `--page-top` `--page-bottom` `--head-gap` |

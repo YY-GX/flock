@@ -27,7 +27,9 @@ import {
   buildGroups,
   bubbleSize,
   clusterDiscs,
+  estimateLabel,
   packGroups,
+  radiiFor,
   representatives,
 } from '../lib/groupsView';
 
@@ -47,21 +49,23 @@ const total = counts.reduce((a, b) => a + b, 0);
    head above and the compass's corner below are paid for. Packing it any
    taller than that is what used to leave two bubbles under the fold. */
 const WIDE = { w: 1000, h: 355 };
-const TALL = { w: 380, h: 620 };
+/* A phone stacks the nine into a column and scrolls it. 760 rather than
+   620 tall since the captions became part of what is packed: nine names
+   under nine bubbles need the longer column. Taller than this does not
+   help — FILL_TALL is a share of the stage's area, so a taller column only
+   grows the bubbles (measured: 860 and 960 packed worse than 760). */
+const TALL = { w: 380, h: 760 };
 
-const wide = packGroups(counts, WIDE.w, WIDE.h);
-const tall = packGroups(counts, TALL.w, TALL.h);
+/* Every bubble wears its caption under its rim, and the pack keeps that
+   box clear (groupsView.ts, bodies()). Here the caption can only be
+   estimated from the text; the browser measures the real one and re-packs. */
+const captions = (w: number, h: number, phone: boolean) =>
+  radiiFor(counts, w, h).map((s, i) => estimateLabel(groups[i].label, counts[i], s.r, phone));
+
+const wide = packGroups(counts, WIDE.w, WIDE.h, captions(WIDE.w, WIDE.h, false));
+const tall = packGroups(counts, TALL.w, TALL.h, captions(TALL.w, TALL.h, true));
 
 const pct = (v: number, of: number) => `${((v / of) * 100).toFixed(3)}%`;
-
-/* A bubble wide enough to carry its own name in the middle. Below this the
-   name goes underneath, where there is room for it. */
-const INSIDE_AT = 0.36; // as a share of the biggest radius, i.e. √(n / nMax)
-/* A phone's stage is a column and its bubbles are about half as wide, so
-   the bar for carrying a plate across the middle is higher there: at 360px
-   "Wading & Shorebirds" would be a four-line plate over a 101px bubble. */
-const ROOMY_AT = 0.6;
-const biggestCount = Math.max(...counts);
 
 const bubbles = groups.map((group, i) => {
   const k = bubbleSize(group.withPhoto.length, group.count);
@@ -74,8 +78,6 @@ const bubbles = groups.map((group, i) => {
   return {
     group,
     discs,
-    inside: Math.sqrt(group.count / biggestCount) >= INSIDE_AT,
-    roomy: Math.sqrt(group.count / biggestCount) >= ROOMY_AT,
     reps: representatives(group, k),
     thumb,
     style: [
@@ -364,15 +366,26 @@ const smallest = groups[groups.length - 1];
         els[i].style.setProperty('--lx', '0px');
       }
 
-      keep = compassCorner();
-      /* one read of all nine labels per layout, never per frame. An inside
-         label ignores --lx; a phone turns two of them back into outside
-         labels, which do not, so measure them all. */
-      halfLabel = labels.map((l) => (l ? l.getBoundingClientRect().width / 2 : 0));
+      /* On a phone the stage is a scrolling column two screens tall, so the
+         fixed compass covers a different part of it at every scroll
+         position; a box cleared at scroll 0 is meaningless a thumb-flick
+         later, and it cost a fifth of the column's width — the pack jammed
+         on it (captions 9–15px onto bubbles at 360–390 wide) and, wedged,
+         could not even honour it. Desktop keeps it: there the stage fits
+         the first screen and the corner really is fixed relative to it. */
+      keep = phone() ? null : compassCorner();
+      /* one read of all nine captions per layout, never per frame: half
+         the width for the edge slide (--lx), and the whole box for the
+         pack, which keeps it clear of every other bubble and caption */
+      halfLabel = labels.map((l, i) => {
+        if (!l) return 0;
+        const q = l.getBoundingClientRect();
+        nodes[i].label = { w: q.width, h: q.height };
+        return q.width / 2;
+      });
 
       if (reduced()) {
-        settle(nodes, w, h); // one static, well-packed frame — no float
-        avoid(nodes, keep);
+        settle(nodes, w, h, 500, keep); // one static, well-packed frame — no float
       } else {
         alpha = 1;
         phase = 'settle';
@@ -515,7 +528,8 @@ const smallest = groups[groups.length - 1];
        title sits 86px from. An outer bubble's label may hang into the
        gutter; nothing wider than that ever does. */
     padding-inline: var(--gutter);
-    /* room for the labels that hang under the lowest bubbles */
+    /* room for a caption to hang a little under the lowest bubble —
+       LABEL_OVERHANG in groupsView.ts is how much of this the pack uses */
     padding-bottom: 2rem;
   }
 
@@ -553,9 +567,10 @@ const smallest = groups[groups.length - 1];
   @media (max-width: 720px) {
     .gstage {
       /* a phone stacks the clump into a column and scrolls it, so the
-         first-screen fit above does not apply; the compass corner is kept
-         clear by the simulation instead */
-      aspect-ratio: 380 / 620;
+         first-screen fit above does not apply — and neither does the
+         compass keep-out (see layout() in the script: the corner moves
+         with the scroll) */
+      aspect-ratio: 380 / 760; /* = TALL above */
       max-width: 100%;
       min-height: 0;
     }

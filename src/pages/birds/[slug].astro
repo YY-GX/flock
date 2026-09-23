@@ -734,11 +734,19 @@ const desc = bird.description
     grid-row: 1;
     writing-mode: vertical-rl;
     text-orientation: upright;
-    /* 28px. Supported unprefixed in Safari since 10.1; a browser that knows
+    /* Supported unprefixed in Safari since 10.1; a browser that knows
        neither property simply sets the name horizontally, which is the
        narrow-screen treatment and is not wrong. */
-    font-family: var(--serif-cjk);
-    font-size: 1.75rem;
+    /* The brush, not the Song face the rest of the glosses use — this is
+       the one slot set as an inscription rather than as text, so it gets
+       the hand (global.css, --brush-cjk). 30px, up from the Song face's
+       28: a brush hairline is thinner than a Song horizontal, and on a 1x
+       screen the thinnest quarter of the stroke cores measured 4.28:1 at
+       28px against 4.88:1 here (6.44:1 dark; 6.89 / 7.82 at 2x, where every
+       stroke carries the token's full ratio). A 7-character name is 248px
+       tall, still inside a 300px frame. */
+    font-family: var(--brush-cjk);
+    font-size: 1.875rem;
     line-height: 1;
     /* vertical setting: this is the gap between glyphs, not between letters */
     letter-spacing: 0.18em;
