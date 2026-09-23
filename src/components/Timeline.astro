@@ -3,11 +3,12 @@ import BirdPanel from './BirdPanel.astro';
 import { timelineBirds, usingFixture, locationsById } from '../lib/data';
 import { splitName } from '../lib/flock';
 import {
-  AXIS_Y, BAND_LABEL_Y, CURVE_TOP, DOT_R, DOT_Y, GRID_BOTTOM, H, HIT_R,
-  MONTH_LABEL_Y, PAD_X, RUN_TICK, SWARM_HALF, W, YEAR_LABEL_Y,
+  AXIS_Y, BAND_LABEL_Y, CURVE_TOP, DOMAIN_START, DOT_R, DOT_Y, GRID_BOTTOM, H, HIT_R,
+  MONTH_LABEL_Y, O_AXIS_Y, O_H, O_TOP, PAD_X, PX_PER_DAY, RUN_TICK, SWARM_HALF, W, YEAR_LABEL_Y,
+  VW, VL, V_COUNT_RULE, V_DOT_R, V_MAX_PX, V_RULER_X, V_X0, V_X1, countX,
   birdingDays, cumulativePoints, curveSampler, dayCaption, dayWhere, formatDate,
-  layoutRuns, monotonePath, monthTicks, seasonBands, swarm, travelRuns,
-  typeKey, typeLabel, x as xOf, TYPE_ORDER,
+  layoutRuns, layoutRunsV, monotonePath, monthTicks, seasonBands, seasonRects, skyline, swarm,
+  swarmV, travelRuns, typeKey, typeLabel, x as xOf, TYPE_ORDER,
 } from '../lib/timeline';
 import { withBase } from '../lib/paths';
 
@@ -22,7 +23,26 @@ const areaD = curveD
   : '';
 const curveEndY = curvePoints.length ? curvePoints[curvePoints.length - 1].y : AXIS_Y;
 
+/* The same climb on the hanging scroll: time down the page, the count
+   growing to the right, from the "0" axis at V_X0 to the "238" ceiling at
+   V_X1. Fitted with time as the independent variable, written out with the
+   pairs swapped — see "the hanging scroll" in src/lib/timeline.ts. */
+/* the sheet's head (y < V_HEAD) holds the count scale; the field — axis,
+   ceiling, rules and the climb — begins under it */
+const V_HEAD = PAD_X - 2;
+const curvePointsV = cumulativePoints(dates, V_X0, V_X1).map((p, i) => (i === 0 ? { x: V_HEAD, y: p.y } : p));
+const curveDV = monotonePath(curvePointsV, true);
+const areaDV = curveDV
+  ? `${curveDV} L ${V_X0} ${VL} L ${V_X0} ${V_HEAD} Z`
+  : '';
+const curveEndX = curvePointsV.length ? curvePointsV[curvePointsV.length - 1].y : V_X1;
+/* the count scale: a rule every V_COUNT_RULE, numbered in the sheet's head */
+const total0 = dates.length;
+const countRules: { x: number; n: number }[] = [];
+for (let n = V_COUNT_RULE; n < total0; n += V_COUNT_RULE) countRules.push({ x: countX(n, total0), n });
+
 const bands = seasonBands();
+const bandsV = seasonBands('v');
 const ticks = monthTicks();
 
 /* --- the swarm (TODO C2) ---
@@ -33,6 +53,44 @@ const ticks = monthTicks();
    documented in src/lib/timeline.ts. */
 const placed = swarm(birds);
 const seatOf = new Map(placed.dots.map((d) => [d.id, d]));
+/* On the scroll a dot's x is the running count when it was added and its y
+   its date, and both carry meaning, so the swarm is derived again there —
+   swarmV() in src/lib/timeline.ts, with the measured price of each lie. */
+const placedV = swarmV(birds);
+const seatOfV = new Map(placedV.dots.map((d) => [d.id, d]));
+const dayV = new Map(placedV.days.map((d) => [d.iso, d]));
+
+/* The season names on the scroll: horizontal, at the head of their own
+   band, just right of the "0" axis — the register heading, exactly where
+   the chart puts them at the top-left of a band. Early on the climb and the
+   first dots stand at the left edge of the field; a name that would sit on
+   them is moved right, past them, so it still opens the register and never
+   crosses a mark. If even that would run off the sheet the name goes into
+   the left margin beside the ruler instead. Widths at 11px, 0.22em tracking:
+   about 10.5 units a letter. */
+const V_BAND_LABEL_DY = 22;
+const V_BAND_LABEL_H = 11;
+const climbXAt = curveSampler(curvePointsV);
+const bandLabelsV = bandsV
+  .filter((b) => b.width > 120)
+  .map((b) => {
+    const y = Math.max(b.x, V_HEAD) + V_BAND_LABEL_DY;
+    const lw = b.season.length * 10.5;
+    let x0 = V_X0 + 10;
+    for (let k = 0; k < 8; k++) {
+      let push = -Infinity;
+      const cx = climbXAt(y);
+      if (cx + 4 > x0 - 6 && cx - 4 < x0 + lw + 6) push = Math.max(push, cx);
+      for (const d of placedV.dots) {
+        if (Math.abs(d.y - (y - V_BAND_LABEL_H / 2)) > V_BAND_LABEL_H / 2 + V_DOT_R + 4) continue;
+        if (d.x + V_DOT_R > x0 - 6 && d.x - V_DOT_R < x0 + lw + 6) push = Math.max(push, d.x + V_DOT_R);
+      }
+      if (push === -Infinity) break;
+      x0 = push + 14;
+    }
+    const inField = x0 + lw <= V_X1 - 6;
+    return { season: b.season, y, x: inField ? x0 : V_RULER_X, anchor: inField ? 'start' : 'end' };
+  });
 
 /* --- the days and the trips (TODO C6) ---
    birdingDays() names a day only when the data proves the place; 14 of the 64
@@ -42,18 +100,21 @@ const seatOf = new Map(placed.dots.map((d) => [d.id, d]));
 const placeOf = (id: string) => locationsById.get(id) ?? null;
 const days = birdingDays(birds, placeOf);
 const dayOf = new Map(days.map((d) => [d.iso, d]));
-/* iso -> { c: the cluster label, x: the day's TRUE x, n: birds } for the client */
+/* iso -> { c: the cluster label, x: the day's TRUE time coordinate, n: birds }
+   for the client. `x` is along time whichever way the chart is hung. */
 const dayIndex = Object.fromEntries(
-  days.map((d) => [d.iso, { c: dayCaption(d), x: +xOf(d.iso).toFixed(1), n: d.count }]),
+  days.map((d) => [d.iso, {
+    c: dayCaption(d), x: +xOf(d.iso).toFixed(1), n: d.count,
+    /* the true x of the day's step on the scroll — where its count really is */
+    xc: +(dayV.get(d.iso)?.xc ?? 0).toFixed(1),
+  }]),
 );
 const biggestDay = days.reduce((a, b) => (b.count > a.count ? b : a), days[0]);
 const biggestWhere = dayWhere(biggestDay);
 
-const runs = layoutRuns(
-  travelRuns(days, placeOf),
-  placed.days,
-  curveSampler(curvePoints),
-);
+const trips = travelRuns(days, placeOf);
+const runs = layoutRuns(trips, placed.days, curveSampler(curvePoints));
+const runsV = layoutRunsV(trips, placedV.days, placedV.dots);
 
 /* --- one dot per bird, still in date order so the arrow keys walk time ---
    data-bird is all the wiring the overlay needs: src/lib/panel.ts picks the
@@ -68,14 +129,20 @@ const dots = birds.map((bird, i) => {
   /* "" on the 14 days the data cannot place — the label then says the count
      and nothing else, rather than a place it cannot stand behind. */
   const where = day ? dayWhere(day) : '';
+  const cx = seat ? seat.x : xOf(iso);
+  const cy = seat ? seat.y : DOT_Y;
+  const seatV = seatOfV.get(bird.id);
   return {
     i,
     id: bird.id,
     name,
     date,
     iso,
-    cx: seat ? seat.x : xOf(iso),
-    cy: seat ? seat.y : DOT_Y,
+    cx,
+    cy,
+    /* the seat on the scroll: x the count, y the date */
+    vx: seatV ? seatV.x : countX(i + 1, birds.length),
+    vy: seatV ? seatV.y : xOf(iso),
     tkey: typeKey(bird.type),
     /* the screen-reader version of the cluster label: no live region needed,
        the day rides along with the bird it belongs to */
@@ -97,11 +164,52 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
   tkey: typeKey(t),
   n: counts.get(t) as number,
 }));
+
+/* --- the whole record, small: the navigator under the horizontal chart ---
+   Linear time, one bar per day out, the climb whole. Why it is a strip of
+   bars and not a zoomed copy of the chart is over `skyline()` in
+   src/lib/timeline.ts. */
+const sky = skyline(days);
+const oRects = seasonRects();
+const oCurveD = monotonePath(cumulativePoints(dates, O_AXIS_Y, O_TOP));
+const yearMarks = ticks
+  .filter((t, i) => t.isJanuary || i === 0)
+  .map((t) => ({ year: t.year, x: t.x, pct: +((t.x / W) * 100).toFixed(3) }));
 ---
 
-<section class="tl">
+<section class="tl" id="tl" data-orient="h">
   <header class="tl__head">
-    <p class="eyebrow">Birding checklist</p>
+    {/* The reading direction, on the eyebrow line and in the eyebrow's own
+        voice. Not a switch: two words with the compass's own When glyph —
+        the line and three dots — lying flat for Across and stood up for
+        Down, the chosen one in full ink and the other faint, which is
+        exactly how the compass marks the view you are in. The word keeps
+        --ink-faint at full strength (4.88:1) either way; only the mark
+        fades, as on the compass. */}
+    <div class="tl__eyebrow-row">
+      <p class="eyebrow">Birding checklist</p>
+      <div class="tl__orient" role="group" aria-label="How to read the timeline">
+        <button type="button" class="tl__o" data-o="h" aria-pressed="true">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+            <line x1="1" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1" />
+            <circle cx="5" cy="10" r="2.2" fill="currentColor" />
+            <circle cx="10" cy="10" r="2.2" fill="currentColor" />
+            <circle cx="15" cy="10" r="2.2" fill="currentColor" />
+          </svg>
+          <span>Across</span>
+        </button>
+        <span class="tl__o-sep" aria-hidden="true">·</span>
+        <button type="button" class="tl__o" data-o="v" aria-pressed="false">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+            <line x1="10" y1="1" x2="10" y2="19" stroke="currentColor" stroke-width="1" />
+            <circle cx="10" cy="5" r="2.2" fill="currentColor" />
+            <circle cx="10" cy="10" r="2.2" fill="currentColor" />
+            <circle cx="10" cy="15" r="2.2" fill="currentColor" />
+          </svg>
+          <span>Down</span>
+        </button>
+      </div>
+    </div>
     <h1 class="display">When</h1>
     <p class="lede tl__lede">
       {total} species, {firstDate} to {lastDate}. The line climbs one step for every bird
@@ -117,117 +225,241 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
   </header>
 
   <p class="sr-only" id="tl-help">
-    Scrolls sideways. Tab once to reach the sightings, then use the left and right arrow
-    keys to move from one bird to the next, Home and End for the first and last, and
-    Enter to open one.
+    Read across, the box scrolls sideways; read down, it is a hanging scroll and the page
+    itself scrolls. Tab once to reach the sightings, then use the arrow keys to move from
+    one bird to the next, Home and End for the first and last, and Enter to open one.
   </p>
 
-  {/*
-    role="group", not a bare focusable <div> (TODO C8). This box is a tab stop
-    — it is how a keyboard scrolls the axis sideways — and a tab stop needs a
-    role that is allowed to carry a name. `generic` is not: ARIA forbids an
-    accessible name on it, and Chrome only exposes this one by accident.
-    `group` is the plain container role, so the label lands somewhere legal
-    without adding a landmark to a site whose skip links are deliberate.
-  */}
-  <div
-    class="tl__scroller"
-    id="scroller"
-    role="group"
-    tabindex="0"
-    aria-label="Timeline, scrolls horizontally"
-    aria-describedby="tl-help"
-  >
+  {/* ======================= ACROSS: the horizontal chart ======================= */}
+  <div class="tl__mode tl__mode--h">
     {/*
-      No role on the <svg> (TODO C8). It used to say role="img", which makes
-      the whole subtree presentational — and the subtree is 238 focusable
-      role="button" dots and 10 links. The two claims cannot both be true.
-      Chrome happened to expose the descendants anyway (measured: 238 buttons
-      in the AX tree under role="img"), so the keyboard path worked, but that
-      is a browser being forgiving, not the markup being right.
-
-      Dropping the role leaves the element as `graphics-document` (Chrome:
-      SvgRoot), a structural role that keeps its name and keeps its children.
-      role="group" measured identically; role="application" was rejected —
-      it hands every key to the page and this chart wants arrows, not all of
-      them. Everything that is only scaffolding — the season washes, the
-      gridlines, the month and year ticks, the three curve numbers — is
-      aria-hidden below, because without role="img" they would otherwise be
-      read out one fragment at a time. The data is the dots and the brackets,
-      and both carry full labels.
+      role="group", not a bare focusable <div> (TODO C8). This box is a tab stop
+      — it is how a keyboard scrolls the axis sideways — and a tab stop needs a
+      role that is allowed to carry a name. `generic` is not: ARIA forbids an
+      accessible name on it, and Chrome only exposes this one by accident.
+      `group` is the plain container role, so the label lands somewhere legal
+      without adding a landmark to a site whose skip links are deliberate.
     */}
+    <div
+      class="tl__scroller"
+      id="scroller"
+      role="group"
+      tabindex="0"
+      aria-label="Timeline, scrolls horizontally"
+      aria-describedby="tl-help"
+    >
+      {/*
+        No role on the <svg> (TODO C8). It used to say role="img", which makes
+        the whole subtree presentational — and the subtree is 238 focusable
+        role="button" dots and 10 links. The two claims cannot both be true.
+        Dropping the role leaves the element as `graphics-document`, a
+        structural role that keeps its name and keeps its children. Everything
+        that is only scaffolding — the season washes, the gridlines, the month
+        and year ticks, the three curve numbers — is aria-hidden below. The
+        data is the dots and the brackets, and both carry full labels.
+      */}
+      <svg
+        class="tl__svg"
+        data-o="h"
+        viewBox={`0 0 ${W} ${H}`}
+        width={W}
+        height={H}
+        style={`--tl-aspect: ${W / H}`}
+        aria-label={`Timeline of ${total} birds from ${firstDate} to ${lastDate}`}
+      >
+        <defs>
+          <linearGradient id="climb-h" x1="0" y1={CURVE_TOP} x2="0" y2={AXIS_Y} gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="var(--curve-fill-top)" />
+            <stop offset="1" stop-color="var(--curve-fill-bottom)" />
+          </linearGradient>
+        </defs>
+
+        {/* Eight washes, not eight rectangles — the edge between two seasons
+            is drawn freehand by the site's own pen, because 1 March at 00:00
+            is a convention and the birds never heard of it. The rule, and the
+            two things it is careful not to move, are over `seasonBands()` in
+            src/lib/timeline.ts. */}
+        <g class="bands" aria-hidden="true">
+          {bands.map((b) => (
+            <path d={b.d} fill={`var(--band-${b.season})`} />
+          ))}
+          {bands.map((b) => (
+            b.width > 120 && (
+              /* 26, not 14: the boundary this label stands next to can lean
+                 10 units either way, and a label the wash has crept over
+                 reads as a mistake */
+              <text class="band-label" x={b.x + 26} y={BAND_LABEL_Y}>{b.season}</text>
+            )
+          ))}
+        </g>
+
+        <g class="grid" aria-hidden="true">
+          {ticks.map((t) => (
+            <line x1={t.x} y1={AXIS_Y} x2={t.x} y2={GRID_BOTTOM} class={t.isJanuary ? 'grid__year' : 'grid__month'} />
+          ))}
+        </g>
+
+        <line class="ceiling" x1="0" y1={CURVE_TOP} x2={W} y2={CURVE_TOP} />
+
+        {areaD && <path class="climb-area" d={areaD} fill="url(#climb-h)" />}
+        {curveD && <path class="climb" d={curveD} />}
+
+        <text class="climb-label" x={W - PAD_X} y={curveEndY - 16} text-anchor="end" aria-hidden="true">{total}</text>
+        <text class="climb-ceiling" x={PAD_X - 10} y={CURVE_TOP + 5} text-anchor="end" aria-hidden="true">{total}</text>
+        <text class="climb-zero" x={PAD_X - 10} y={AXIS_Y - 10} text-anchor="end" aria-hidden="true">0</text>
+
+        <line class="axis" x1="0" y1={AXIS_Y} x2={W} y2={AXIS_Y} />
+
+        {/* Trip brackets — TODO C6, the thing the dense clusters were always
+            asking for. A dot is a bird, a cluster is a day, and a bracket is the
+            trip those days belong to: "COLORADO · 49". Hover or focus one to
+            raise its dots and read the card; click to pin it so the cluster
+            stays lit while you look at it. The ten runs and the rule that
+            picks them are in src/lib/timeline.ts.
+
+            The label sits above the axis, not in the 44-unit band DESIGN2 §1.4
+            assumed: the swarm's top row is at 252 and the axis at 230, so the
+            band is 22 units and only the hairline fits in it. */}
+        <g class="runs" tabindex="-1" role="group" aria-label={`${runs.length} trips`}>
+          {runs.map((r, i) => (
+            /* The bracket opens the trip's first day, and the <a> *is* the
+               bracket (TODO C8): an SVG <a> is focusable and takes a tabindex
+               like any other element, so it holds the roving index itself. */
+            <a
+              class="run"
+              href={withBase(`/days/${r.key}`)}
+              data-run={r.key}
+              data-isos={r.isos.join(' ')}
+              data-region={r.region}
+              data-dates={r.dates}
+              data-detail={r.detail}
+              tabindex={i === 0 ? 0 : -1}
+              aria-label={`${r.region}: ${r.dates}, ${r.detail}`}
+            >
+              <rect class="run-hit" x={r.hx0} y={r.hy} width={r.hx1 - r.hx0} height={r.hh} />
+              <path
+                class="run-bracket"
+                d={`M ${r.x0.toFixed(1)} ${r.bracketY + RUN_TICK} V ${r.bracketY} H ${r.x1.toFixed(1)} V ${r.bracketY + RUN_TICK}`}
+              />
+              <text class="run-label" x={r.mid.toFixed(1)} y={r.labelY.toFixed(1)} text-anchor="middle">{r.label}</text>
+            </a>
+          ))}
+        </g>
+
+        {/* The hovered day's TRUE date, dropped from the axis through its
+            cluster. Most days have not moved and the stem lands in the middle of
+            the column; the handful that the swarm pushed sideways show it,
+            rather than hiding it. Moved and sized by the script. */}
+        <g class="day-mark" aria-hidden="true">
+          <line class="day-mark__stem" x1="0" y1={AXIS_Y} x2="0" y2={DOT_Y + SWARM_HALF + 12} />
+          <circle class="day-mark__cap" cx="0" cy={AXIS_Y} r="3.2" />
+        </g>
+
+        {/* One tab stop for 238 dots: the first carries tabindex 0, the rest -1,
+            and the arrow keys move the roving index (see the script below). */}
+        <g class="dots" tabindex="-1" role="group" aria-label={`${total} first sightings`}>
+          {dots.map((d) => (
+            <g
+              class="dot-g"
+              data-bird={d.id}
+              data-name={d.name}
+              data-date={d.date}
+              data-day={d.iso}
+              tabindex={d.i === 0 ? 0 : -1}
+              role="button"
+              aria-label={d.label}
+              style={`--c: var(--t-${d.tkey}); --d: ${Math.min(d.i * 7, 2400)}ms`}
+            >
+              <circle class="dot-hit" cx={d.cx} cy={d.cy} r={HIT_R} />
+              <circle class="dot" cx={d.cx} cy={d.cy} r={DOT_R} />
+            </g>
+          ))}
+        </g>
+
+        <g class="ticks" aria-hidden="true">
+          {ticks.map((t) => (
+            <text class="tick-month" x={t.mid} y={MONTH_LABEL_Y} text-anchor="middle">{t.label}</text>
+          ))}
+          {ticks.map((t, i) => (
+            (t.isJanuary || i === 0) && (
+              <text class="tick-year" x={t.x + 6} y={YEAR_LABEL_Y}>{t.year}</text>
+            )
+          ))}
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  {/* ======================= DOWN: the hanging scroll =======================
+      The same record hung as a 卷轴. Down is time; across is the running
+      count, so a dot stands at the x of how many species had been seen when
+      it was added and the flock is the staircase itself, from "0" at the
+      left to "238" at the right. The season washes are the sheet's
+      registers, full width; the month ruler is the left margin; the season
+      names stand in the right margin one upright letter under the next.
+      Every word is horizontal. The page scrolls — there is no inner box and
+      no wheel to hijack, which is the point of reading it this way. The
+      derivation and the measured price of the dodging are over `VW` and
+      `swarmV()` in src/lib/timeline.ts. */}
+  <div class="tl__mode tl__mode--v">
     <svg
-      id="axis"
-      class="tl__svg"
-      viewBox={`0 0 ${W} ${H}`}
-      width={W}
-      height={H}
-      style={`--tl-aspect: ${W / H}`}
-      aria-label={`Timeline of ${total} birds from ${firstDate} to ${lastDate}`}
+      class="tl__svg tl__svg--v"
+      data-o="v"
+      viewBox={`0 0 ${VW} ${VL}`}
+      width={VW}
+      height={VL}
+      style={`--tl-vmax: ${V_MAX_PX}px`}
+      aria-label={`Timeline of ${total} birds from ${firstDate} to ${lastDate}, read downward`}
     >
       <defs>
-        <linearGradient id="climb" x1="0" y1={CURVE_TOP} x2="0" y2={AXIS_Y} gradientUnits="userSpaceOnUse">
+        <linearGradient id="climb-v" x1={V_X1} y1="0" x2={V_X0} y2="0" gradientUnits="userSpaceOnUse">
           <stop offset="0" stop-color="var(--curve-fill-top)" />
           <stop offset="1" stop-color="var(--curve-fill-bottom)" />
         </linearGradient>
       </defs>
 
-      {/* Eight washes, not eight rectangles — the edge between two seasons
-          is drawn freehand by the site's own pen, because 1 March at 00:00
-          is a convention and the birds never heard of it. The rule, and the
-          two things it is careful not to move, are over `seasonBands()` in
-          src/lib/timeline.ts. */}
       <g class="bands" aria-hidden="true">
-        {bands.map((b) => (
+        {bandsV.map((b) => (
           <path d={b.d} fill={`var(--band-${b.season})`} />
         ))}
-        {bands.map((b) => (
-          b.width > 120 && (
-            /* 26, not 14: the boundary this label stands next to can lean
-               10 units either way, and a label the wash has crept over
-               reads as a mistake */
-            <text class="band-label" x={b.x + 26} y={BAND_LABEL_Y}>{b.season}</text>
-          )
+        {bandLabelsV.map((l) => (
+          <text class="band-label" x={l.x.toFixed(1)} y={l.y} text-anchor={l.anchor}>{l.season}</text>
         ))}
       </g>
 
       <g class="grid" aria-hidden="true">
         {ticks.map((t) => (
-          <line x1={t.x} y1={AXIS_Y} x2={t.x} y2={GRID_BOTTOM} class={t.isJanuary ? 'grid__year' : 'grid__month'} />
+          <line x1={V_X0} y1={t.x} x2={V_X1} y2={t.x} class={t.isJanuary ? 'grid__year' : 'grid__month'} />
+        ))}
+        {/* the count rules: every 50 species, from the head of the sheet down */}
+        {countRules.map((r) => (
+          <line class="grid__count" x1={r.x} y1={V_HEAD} x2={r.x} y2={VL} />
         ))}
       </g>
 
-      <line class="ceiling" x1="0" y1={CURVE_TOP} x2={W} y2={CURVE_TOP} />
+      <line class="ceiling" x1={V_X1} y1={V_HEAD} x2={V_X1} y2={VL} />
 
-      {areaD && <path class="climb-area" d={areaD} fill="url(#climb)" />}
-      {curveD && <path class="climb" d={curveD} />}
+      {areaDV && <path class="climb-area" d={areaDV} fill="url(#climb-v)" />}
+      {curveDV && <path class="climb" d={curveDV} />}
 
-      <text class="climb-label" x={W - PAD_X} y={curveEndY - 16} text-anchor="end" aria-hidden="true">{total}</text>
-      <text class="climb-ceiling" x={PAD_X - 10} y={CURVE_TOP + 5} text-anchor="end" aria-hidden="true">{total}</text>
-      <text class="climb-zero" x={PAD_X - 10} y={AXIS_Y - 10} text-anchor="end" aria-hidden="true">0</text>
+      {/* the total where the climb arrives: just inside the ceiling, on the
+          wash, below the last dot */}
+      <text class="climb-label climb-label--v" x={curveEndX - 8} y={VL - PAD_X + 8} text-anchor="end" aria-hidden="true">{total}</text>
+      {/* the count scale in the sheet's head, before the record begins */}
+      <g class="count-scale" aria-hidden="true">
+        <text class="climb-zero" x={V_X0} y={PAD_X - 10} text-anchor="middle">0</text>
+        {countRules.map((r) => (
+          <text class="climb-zero" x={r.x} y={PAD_X - 10} text-anchor="middle">{r.n}</text>
+        ))}
+        <text class="climb-ceiling" x={V_X1} y={PAD_X - 10} text-anchor="middle">{total}</text>
+      </g>
 
-      <line class="axis" x1="0" y1={AXIS_Y} x2={W} y2={AXIS_Y} />
+      <line class="axis" x1={V_X0} y1={V_HEAD} x2={V_X0} y2={VL} />
 
-      {/* Trip brackets — TODO C6, the thing the dense clusters were always
-          asking for. A dot is a bird, a cluster is a day, and a bracket is the
-          trip those days belong to: "COLORADO · 49". Hover or focus one to
-          raise its dots and read the card; click to pin it so the cluster
-          stays lit while you look at it. The ten runs and the rule that
-          picks them are in src/lib/timeline.ts.
-
-          The label sits above the axis, not in the 44-unit band DESIGN2 §1.4
-          assumed: the swarm's top row is at 252 and the axis at 230, so the
-          band is 22 units and only the hairline fits in it. */}
-      <g class="runs" id="runs" tabindex="-1" role="group" aria-label={`${runs.length} trips`}>
-        {runs.map((r, i) => (
-          /* The bracket opens the trip's first day, and the <a> *is* the
-             bracket (TODO C8). It used to be an <a tabindex="-1"> wrapped
-             round a <g role="link"> that carried the roving index, which put
-             a link inside a link: measured, that was 20 link nodes in the
-             accessibility tree for 10 brackets, each announced twice. An SVG
-             <a> is focusable and takes a tabindex like any other element, so
-             it can hold the roving index itself and the extra <g> goes away.
-             Enter is still handled in the script, for the pin. */
+      {/* the ten trips: a hairline beside the cluster spanning its dates,
+          ticks toward the dots, the label horizontal beside it */}
+      <g class="runs" tabindex="-1" role="group" aria-label={`${runsV.length} trips`}>
+        {runsV.map((r, i) => (
           <a
             class="run"
             href={withBase(`/days/${r.key}`)}
@@ -239,28 +471,33 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
             tabindex={i === 0 ? 0 : -1}
             aria-label={`${r.region}: ${r.dates}, ${r.detail}`}
           >
-            <rect class="run-hit" x={r.hx0} y={r.hy} width={r.hx1 - r.hx0} height={r.hh} />
+            <rect class="run-hit" x={r.hx.toFixed(1)} y={r.hy.toFixed(1)} width={r.hw.toFixed(1)} height={r.hh.toFixed(1)} />
             <path
               class="run-bracket"
-              d={`M ${r.x0.toFixed(1)} ${r.bracketY + RUN_TICK} V ${r.bracketY} H ${r.x1.toFixed(1)} V ${r.bracketY + RUN_TICK}`}
+              d={r.side === 'right'
+                ? `M ${(r.bx - RUN_TICK).toFixed(1)} ${r.y0.toFixed(1)} H ${r.bx.toFixed(1)} V ${r.y1.toFixed(1)} H ${(r.bx - RUN_TICK).toFixed(1)}`
+                : `M ${(r.bx + RUN_TICK).toFixed(1)} ${r.y0.toFixed(1)} H ${r.bx.toFixed(1)} V ${r.y1.toFixed(1)} H ${(r.bx + RUN_TICK).toFixed(1)}`}
             />
-            <text class="run-label" x={r.mid.toFixed(1)} y={r.labelY.toFixed(1)} text-anchor="middle">{r.label}</text>
+            <text
+              class="run-label"
+              x={r.labelX.toFixed(1)}
+              y={r.labelY.toFixed(1)}
+              text-anchor={r.side === 'right' ? 'start' : 'end'}
+              dominant-baseline="middle"
+            >{r.label}</text>
           </a>
         ))}
       </g>
 
-      {/* The hovered day's TRUE date, dropped from the axis through its
-          cluster. Most days have not moved and the stem lands in the middle of
-          the column; the handful that the swarm pushed sideways show it,
-          rather than hiding it. Moved and sized by the script. */}
-      <g class="day-mark" id="day-mark" aria-hidden="true">
-        <line class="day-mark__stem" x1="0" y1={AXIS_Y} x2="0" y2={DOT_Y + SWARM_HALF + 12} />
-        <circle class="day-mark__cap" cx="0" cy={AXIS_Y} r="3.2" />
+      {/* the hovered day's TRUE date and TRUE count: a dashed line across
+          the sheet at the date, from the "0" axis to just past the cluster,
+          with the cap at the x of the day's own step */}
+      <g class="day-mark" aria-hidden="true">
+        <line class="day-mark__stem" x1={V_X0} y1="0" x2={V_X0} y2="0" />
+        <circle class="day-mark__cap" cx={V_X0} cy="0" r="3.2" />
       </g>
 
-      {/* One tab stop for 238 dots: the first carries tabindex 0, the rest -1,
-          and the arrow keys move the roving index (see the script below). */}
-      <g class="dots" id="dots" tabindex="-1" role="group" aria-label={`${total} first sightings`}>
+      <g class="dots" tabindex="-1" role="group" aria-label={`${total} first sightings`}>
         {dots.map((d) => (
           <g
             class="dot-g"
@@ -273,19 +510,21 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
             aria-label={d.label}
             style={`--c: var(--t-${d.tkey}); --d: ${Math.min(d.i * 7, 2400)}ms`}
           >
-            <circle class="dot-hit" cx={d.cx} cy={d.cy} r={HIT_R} />
-            <circle class="dot" cx={d.cx} cy={d.cy} r={DOT_R} />
+            <circle class="dot-hit" cx={d.vx} cy={d.vy} r={HIT_R} />
+            <circle class="dot" cx={d.vx} cy={d.vy} r={V_DOT_R} />
           </g>
         ))}
       </g>
 
+      {/* the ruler: month names beside each month, the year under each
+          January rule — right-aligned in the left margin */}
       <g class="ticks" aria-hidden="true">
         {ticks.map((t) => (
-          <text class="tick-month" x={t.mid} y={MONTH_LABEL_Y} text-anchor="middle">{t.label}</text>
+          <text class="tick-month" x={V_RULER_X} y={t.mid} text-anchor="end" dominant-baseline="middle">{t.label}</text>
         ))}
         {ticks.map((t, i) => (
           (t.isJanuary || i === 0) && (
-            <text class="tick-year" x={t.x + 6} y={YEAR_LABEL_Y}>{t.year}</text>
+            <text class="tick-year" x={V_RULER_X} y={t.x + 17} text-anchor="end">{t.year}</text>
           )
         ))}
       </g>
@@ -293,6 +532,64 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
   </div>
 
   <footer class="tl__foot">
+    {/* The whole record, small, under the chart it navigates (Across only,
+        and only where there is a pointer to drag it with). A skyline of the
+        64 days out, the climb in one sweep, the washes, and a bracket round
+        the stretch the chart is showing. Point at it and the day under the
+        pointer is named; click or drag and the chart opens on it. It is,
+        literally, the chart's scrollbar, and says so to assistive tech. */}
+    <div class="tl__whole" id="tl-whole">
+      <svg
+        class="tl__whole-svg"
+        viewBox={`0 0 ${W} ${O_H}`}
+        preserveAspectRatio="none"
+        role="scrollbar"
+        tabindex="0"
+        aria-controls="scroller"
+        aria-orientation="horizontal"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+        aria-label="The whole record; moves the timeline"
+        aria-describedby="tl-whole-help"
+        data-start={DOMAIN_START}
+        data-ppd={PX_PER_DAY}
+        data-pad={PAD_X}
+      >
+        <g class="whole-bands" aria-hidden="true">
+          {oRects.map((r) => (
+            <rect x={r.x} y="0" width={r.width} height={O_H} fill={`var(--band-${r.season})`} />
+          ))}
+        </g>
+        <line class="whole-axis" x1="0" y1={O_AXIS_Y} x2={W} y2={O_AXIS_Y} />
+        <g class="whole-sky" aria-hidden="true">
+          {sky.map((b) => (
+            <rect x={b.x} y={b.y} width={b.w} height={b.h} />
+          ))}
+        </g>
+        <g class="whole-jan" aria-hidden="true">
+          {yearMarks.map((y) => (
+            <line x1={y.x} y1={O_AXIS_Y - 5} x2={y.x} y2={O_AXIS_Y + 5} />
+          ))}
+        </g>
+        {oCurveD && <path class="whole-climb" d={oCurveD} />}
+        <line class="whole-cursor" x1="0" y1="0" x2="0" y2={O_H} />
+        <g class="whole-here" aria-hidden="true">
+          <path class="whole-here__top" d="" />
+          <path class="whole-here__bottom" d="" />
+        </g>
+      </svg>
+      <div class="tl__whole-years" aria-hidden="true">
+        {yearMarks.map((y) => (
+          <span style={`left: ${y.pct}%`}>{y.year}</span>
+        ))}
+      </div>
+      <p class="sr-only" id="tl-whole-help">
+        Arrow keys move the timeline by a quarter of its width, Page Up and Page Down by a
+        whole width, Home and End to the start and the end.
+      </p>
+    </div>
+
     <ul class="tl__legend">
       {legend.map((l) => (
         <li style={`--dot: var(--t-${l.tkey})`}>
@@ -307,10 +604,24 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
         <a class="tl__dayslink" href={withBase("/days")}>{days.length} days out</a> — the biggest, {biggestDay.label}
         {biggestWhere ? (biggestDay.placeIds.length ? ` at ${biggestWhere}` : ` ${biggestWhere}`) : ''}, brought {biggestDay.count}
       </p>
-      <p class="meta tl__hint" aria-hidden="true">scroll sideways</p>
     </div>
   </footer>
 </section>
+
+{/* The remembered reading direction, applied before first paint so a reader
+    who chose the scroll does not see the chart flash first. Inline and
+    re-run on every client-side navigation; the module below keeps the two
+    buttons in step. Every storage call is guarded — private windows throw. */}
+<script is:inline data-astro-rerun>
+  (function () {
+    try {
+      if (localStorage.getItem('flock:tl-orient') === 'v') {
+        var s = document.getElementById('tl');
+        if (s) s.setAttribute('data-orient', 'v');
+      }
+    } catch (e) {}
+  })();
+</script>
 
 {/* Resolves --compass-safe to a real px box the tip script can read. */}
 <span id="tl-safe" class="tl__safe" aria-hidden="true"></span>
@@ -350,6 +661,62 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
     margin-bottom: var(--head-gap);
   }
 
+  /* the eyebrow and the reading direction share one line; the eyebrow's own
+     margin is kept by leaving it as the first child */
+  .tl__eyebrow-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.4rem 2rem;
+  }
+  .tl__eyebrow-row .eyebrow { margin-bottom: 0; }
+  .tl__orient {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .tl__o {
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: var(--ink-faint);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    cursor: pointer;
+    transition: color var(--dur-fast) ease;
+  }
+  .tl__o svg {
+    display: block;
+    flex: none;
+    opacity: 0.42;
+    transition: opacity var(--dur-fast) ease;
+  }
+  .tl__o:hover,
+  .tl__o:focus-visible { color: var(--ink-soft); }
+  .tl__o:hover svg,
+  .tl__o:focus-visible svg { opacity: 0.8; }
+  .tl__o[aria-pressed="true"] { color: var(--ink); cursor: default; }
+  .tl__o[aria-pressed="true"] svg { opacity: 1; }
+  .tl__o-sep { opacity: 0.7; }
+
+  /* one chart at a time; the other is display:none, so it has no tab stops,
+     no accessibility nodes and no layout */
+  .tl[data-orient="h"] .tl__mode--v,
+  .tl[data-orient="v"] .tl__mode--h,
+  .tl[data-orient="v"] .tl__whole { display: none; }
+
   /* The legend used to live in .tl__head, where it cost ~95px of the first
      screen before a single dot was drawn (audit §2.2). It reads just as well
      under the chart it explains. */
@@ -358,23 +725,18 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
     flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
-    gap: 0.8rem 2.5rem;
-    margin-top: 1.5rem;
+    gap: 0.55rem 2.5rem;
+    /* 1rem, and the strip is 44px: on arrival at 1440×900 the strip, the
+       nine-type legend and the days-out line all have to fit in the 150px
+       the compass reserve leaves under the chart. The "scroll sideways"
+       hint that used to end this block is gone — the strip's bracket round
+       the visible stretch is the affordance now, and says more. */
+    margin-top: 1rem;
     /* This row sits at the bottom-left of the window on arrival, which is
        where the compass lives, so it insets past it (audit §9.1). */
     padding: 0 var(--gutter) 0 max(var(--gutter), var(--compass-safe));
   }
 
-  /* The legend, then the day line and the scroll hint under it.
-
-     This block used to be right-aligned, on the assumption that it shared a
-     row with the legend. It never does: the legend is nine type names and
-     wraps to the full width at every viewport, so `space-between` had
-     nothing to separate and the end block landed on its own line — a 315px
-     ragged-left column starting at the compass inset with 960px of empty
-     paper to its right (AUDIT2 §4.2). Left-aligned under the legend, with
-     the sentence allowed its own width, it is one line at 1440 and reads
-     the same way at 360. */
   .tl__foot-end {
     display: flex;
     flex-direction: column;
@@ -448,6 +810,21 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
     overflow: visible;
   }
 
+  /* The scroll hangs centred in the page, as a mounted scroll hangs on a
+     wall, never wider than V_MAX_PX (see src/lib/timeline.ts for the scale
+     and hit-ring arithmetic that fixes that number). Its height follows the
+     viewBox; the page grows to hold it and the reader wheels down. On a
+     phone it takes the whole measure between the gutters. */
+  .tl__mode--v {
+    display: flex;
+    justify-content: center;
+    padding: 0 var(--gutter);
+  }
+  .tl__svg--v {
+    width: min(100%, var(--tl-vmax, 560px));
+    height: auto;
+  }
+
   /* B1's paper grain sits under all of this now. Two things were re-checked
      on the grained ground rather than on the flat token: the season names,
      which were 0.75 opacity on --ink-faint (4.88:1) and went muddy over the
@@ -503,6 +880,8 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
     font-size: 26px;
     fill: var(--curve);
   }
+  .climb-label--v { font-size: 22px; }
+  .grid__count { stroke: var(--rule-soft); stroke-width: 1; }
   .climb-ceiling,
   .climb-zero {
     font-family: var(--serif);
@@ -550,8 +929,7 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
   /* TODO C6. Touching one dot raises the whole day it belongs to: the rest of
      that day's cluster stays at full strength and grows a little, every other
      day drops back. That is what turns "a smudge of dots" into "the 21 birds
-     of 19 August". The old rule dimmed everything except the one dot under the
-     pointer, which hid exactly the relationship worth showing. */
+     of 19 August". */
   .dots.has-day .dot-g:not(.is-kin) .dot { opacity: 0.28; }
   .dots.has-day .dot-g.is-kin .dot { transform: scale(1.35); }
   .dots.has-day .dot-g.is-kin:hover .dot,
@@ -607,7 +985,72 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
   }
   .day-mark__cap { fill: var(--ink-faint); }
 
-  .tl__hint { margin: 0; }
+  /* ---- the whole record, small ---- */
+  .tl__whole {
+    flex: 1 0 100%;
+    position: relative;
+    margin-bottom: 0;
+  }
+  .tl__whole-svg {
+    display: block;
+    width: 100%;
+    height: 44px; /* O_H — the y axis is 1:1, the x axis is squeezed */
+    overflow: visible;
+    cursor: pointer;
+    touch-action: none;
+  }
+  .tl__whole-svg:focus-visible { outline-offset: 4px; }
+  .whole-bands,
+  .whole-sky,
+  .whole-jan,
+  .whole-climb,
+  .whole-cursor,
+  .whole-here { pointer-events: none; }
+  .whole-axis { stroke: var(--rule); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .whole-jan line { stroke: var(--rule); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  /* the days: marks, not text, so a type-colour-strength ink is fine */
+  .whole-sky rect { fill: var(--ink-faint); opacity: 0.5; }
+  .whole-climb {
+    fill: none;
+    stroke: var(--curve);
+    stroke-width: 1.4;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+  .whole-cursor {
+    stroke: var(--ink-faint);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+    vector-effect: non-scaling-stroke;
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+  .whole-cursor.is-on { opacity: 1; }
+  /* the stretch the chart is showing: the trip bracket's own mark, once
+     above and once below, in --ink-soft; it follows the chart's scroll and
+     moves when dragged. Not a filled box and not a scrim — a scrim would
+     muddy the washes, and the ground is never tinted (B9). */
+  .whole-here path {
+    fill: none;
+    stroke: var(--ink-soft);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  .tl__whole-years {
+    position: relative;
+    height: 14px;
+    margin-top: 1px;
+    font-family: var(--sans);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.12em;
+    color: var(--ink-faint);
+  }
+  .tl__whole-years span {
+    position: absolute;
+    top: 0;
+    transform: translateX(5px);
+    line-height: 1;
+  }
 
   /* A hidden box the size of the compass's corner, so the tip script can read
      --compass-safe as a resolved length instead of guessing a number. */
@@ -658,18 +1101,30 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
   }
   .tip__day[hidden] { display: none; }
 
+  /* the navigator wants a pointer to drag it with; a touch screen reads the
+     scroll instead, and the strip would only cost the phone its legend */
+  @media (hover: none) {
+    .tl__whole { display: none; }
+  }
+
   @media (max-width: 760px) {
     .tl { --tl-head: 205px; }
     .tl__svg {
       --tl-h: max(240px, min(clamp(300px, 58vh, 520px), calc(100vh - var(--tl-reserve))));
     }
+    .tl__svg--v { height: auto; }
     /* the box is drawn smaller here, so the target has to be bigger in
-       viewBox units to stay at 24px on glass */
+       viewBox units to stay at 24px on glass; the scroll is drawn smaller
+       still (0.536), so its ring is 23 — one under its 24-unit lattice */
     .dot-hit { r: 21px; }
+    .tl__svg--v .dot-hit { r: 23px; }
     /* DESIGN2 §1.4: below 760 the brackets stay — they scale with the svg —
        but the words go, because 12px of letterspaced sans is wider than most
-       of the trips it names. The card still names them on touch. */
+       of the trips it names. The card still names them on touch. On the
+       scroll the label runs *along* time, where a trip is 27–45 units long
+       and the word 90–120: the same rule, the same reason. */
     .run-label { display: none; }
+    .tl__whole { display: none; }
     .tl__legend { gap: 0.4rem 1.1rem; font-size: 0.7rem; }
     .tl__foot { gap: 0.8rem 1.2rem; }
     .tl__foot-end { align-items: flex-start; text-align: left; }
@@ -678,143 +1133,56 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
 
 <script>
   /*
-   * Timeline behaviour only: the climb drawing itself in, the hover label, and
-   * turning a vertical wheel into sideways travel.
+   * Timeline behaviour: the climb drawing itself in, the hover label, the
+   * roving keyboard index over dots and brackets, the trip pin, the day stem,
+   * turning a vertical wheel into sideways travel (Across only), the
+   * navigator strip, and the Across/Down choice.
    *
-   * Opening a bird is NOT here any more — the dots carry data-bird and
+   * Two charts, one set of behaviour: `wireChart(svg, o)` binds everything a
+   * chart needs to that svg, with `o` deciding only the few things that
+   * depend on which way time runs — which axis the day stem lies along,
+   * which way to scroll a focused dot into view, and whose scroll event the
+   * tip follows. Only one chart is displayed at a time; the other has no
+   * layout and no tab stops.
+   *
+   * Opening a bird is NOT here — the dots carry data-bird and
    * src/lib/panel.ts does the rest (fill, focus trap, Esc, scroll restore).
    */
   import { isPanelOpen } from '../lib/panel';
 
+  type Orient = 'h' | 'v';
+  const KEY = 'flock:tl-orient';
   const el = <T extends Element>(id: string) => document.getElementById(id) as T | null;
+  const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  type DayRec = { c: string; x: number; n: number; xc?: number };
 
   function setup() {
+    const root = el<HTMLElement>('tl');
     const scroller = el<HTMLDivElement>('scroller');
-    const dots = el<SVGGElement>('dots');
     const tip = el<HTMLDivElement>('tip');
     const tipName = el<HTMLElement>('tip-name');
     const tipDate = el<HTMLElement>('tip-date');
     const tipDay = el<HTMLElement>('tip-day');
-    if (!scroller || !dots || !tip || !tipName || !tipDate || !tipDay) return;
+    if (!root || !scroller || !tip || !tipName || !tipDate || !tipDay) return;
 
     // re-entrant safety: astro:page-load fires on every client-side navigation
-    if (dots.dataset.wired === '1') return;
-    dots.dataset.wired = '1';
+    if (root.dataset.wired === '1') return;
+    root.dataset.wired = '1';
 
-    /* ---------------- the climb draws itself in ---------------- */
-
-    const climb = document.querySelector<SVGPathElement>('path.climb');
-    if (climb && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      const len = climb.getTotalLength();
-      climb.style.setProperty('--len', String(Math.ceil(len)));
-      climb.classList.add('is-drawing');
-    }
-
-    /* ---------------- open on data, not on the empty end ----------------
-       The domain starts Sep 2024 and the first five months hold one bird, so
-       a narrow window opened on an empty plot (audit §2.2). Slide the start
-       just far enough that the first screen holds birds; a laptop-width
-       window already does, and keeps the origin and its "0". */
-
-    const svg = scroller.querySelector('svg');
-    if (svg && scroller.scrollLeft === 0) {
-      const box = svg.getBoundingClientRect();
-      const units = svg.viewBox.baseVal.width / (box.width || 1);
-      const win = scroller.clientWidth * units;
-      const xs = Array.from(dots.querySelectorAll<SVGCircleElement>('.dot'))
-        .map((c) => c.cx.baseVal.value)
-        .sort((a, b) => a - b);
-      const want = Math.min(18, xs.length);
-      if (want && xs[want - 1] > win * 0.9) {
-        /* The leftmost window that holds `want` dots — searched against the
-           0.86 of the window the scroll below actually leaves for them. The
-           last 0.14 is bled in on the left, so a window sized `win` here put
-           the right-hand dots (and, because the dots come in day-clusters,
-           a whole day of them) back off the right edge: five dots on the
-           first screen at 900x900 instead of 54 (AUDIT2 §4.1). */
-        const reach = win * (1 - 0.14);
-        let start = xs[0];
-        for (let i = 0; i + want - 1 < xs.length; i++) {
-          if (xs[i + want - 1] - xs[i] <= reach) { start = xs[i]; break; }
-        }
-        scroller.scrollLeft = Math.max(0, start / units - scroller.clientWidth * 0.14);
-      }
-    }
-
-    /* ---------------- the day a dot belongs to (TODO C6) ----------------
-       238 first sightings fall on 64 days, and the dense places on the axis
-       are trips. Touching any dot names its day — "19 Aug 2025 · Denver, CO ·
-       21 new birds" — lights the rest of that day's cluster, and drops a stem
-       from the axis at the day's true date, which is also the honest way to
-       show the small sideways displacement the swarm had to spend to make the
-       big piles clickable.
-
-       Seam for DESIGN §4 I1: `dayIndex` below is the same shape a
-       /days/<iso> route would need; birdingDays() in src/lib/timeline.ts is
-       the whole data layer, ready to move to src/lib/days.ts. Nothing here
-       would have to change except making the caption a link. */
-
-    type DayRec = { c: string; x: number; n: number };
     let dayData: Record<string, DayRec> = {};
     try {
       dayData = JSON.parse(el<HTMLScriptElement>('tl-days')?.textContent || '{}');
     } catch { dayData = {}; }
 
-    const mark = el<SVGGElement>('day-mark');
-    const markStem = mark?.querySelector<SVGLineElement>('.day-mark__stem') ?? null;
-    const markCap = mark?.querySelector<SVGCircleElement>('.day-mark__cap') ?? null;
-
-    const kin = new Map<string, SVGGElement[]>();
-    let activeDay: string | null = null;
-    let kinEls: SVGGElement[] = [];
-
-    function setDay(iso: string | null) {
-      if (iso === activeDay) return;
-      for (const g of kinEls) g.classList.remove('is-kin');
-      activeDay = iso;
-      kinEls = iso ? kin.get(iso) ?? [] : [];
-      if (!iso || !kinEls.length) {
-        dots!.classList.remove('has-day');
-        mark?.classList.remove('is-on');
-        kinEls = [];
-        return;
-      }
-      for (const g of kinEls) g.classList.add('is-kin');
-      dots!.classList.add('has-day');
-
-      const rec = dayData[iso];
-      if (rec && rec.n > 1 && markStem && markCap && mark) {
-        let low = 0;
-        for (const g of kinEls) {
-          const c = g.querySelector('circle.dot');
-          const cy = c ? Number(c.getAttribute('cy')) : 0;
-          if (cy > low) low = cy;
-        }
-        markStem.setAttribute('x1', String(rec.x));
-        markStem.setAttribute('x2', String(rec.x));
-        markStem.setAttribute('y2', String(low + 14));
-        markCap.setAttribute('cx', String(rec.x));
-        mark.classList.add('is-on');
-      } else {
-        mark?.classList.remove('is-on');
-      }
-    }
-
-    /* ---------------- hover label ---------------- */
-
-    /* SVGGraphicsElement, not SVGGElement: a dot is a <g> and a trip bracket
-       is now an <a> (TODO C8). Both are SVGGraphicsElements and the label
-       only ever asks either of them for a bounding box and a dataset. */
-    let hovered: SVGGraphicsElement | null = null;
-
-    /* The compass owns the bottom-left corner. #tl-safe is a hidden box of
+    /* ---------------- the hover label, shared by both charts ----------------
+       The compass owns the bottom-left corner. #tl-safe is a hidden box of
        exactly var(--compass-safe), so this reads the real token (which shrinks
        on phones) instead of a hardcoded 146. */
     const safeEl = el<HTMLElement>('tl-safe');
     const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-    function placeTip(group: SVGGraphicsElement) {
-      const r = group.getBoundingClientRect();
+    function placeTipAt(r: DOMRect) {
       const t = tip!.getBoundingClientRect();
       const vw = window.innerWidth;
       const vh = window.innerHeight;
@@ -836,271 +1204,399 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
       tip!.style.left = `${Math.round(left)}px`;
       tip!.style.top = `${Math.round(top)}px`;
     }
+    const placeTip = (g: Element) => placeTipAt(g.getBoundingClientRect());
 
-    function showTip(group: SVGGElement) {
-      const name = group.dataset.name;
-      if (!name) return;
-      hovered = group;
-      const iso = group.dataset.day ?? null;
-      setDay(iso);
+    function fillTip(name: string, date: string, day: string) {
       tipName!.textContent = name;
-      tipDate!.textContent = group.dataset.date ?? '';
-      const rec = iso ? dayData[iso] : null;
-      if (rec && rec.n > 1) {
-        tipDay!.textContent = rec.c;
-        tipDay!.hidden = false;
-      } else {
-        tipDay!.textContent = '';
-        tipDay!.hidden = true;
-      }
+      tipDate!.textContent = date;
+      tipDay!.textContent = day;
+      tipDay!.hidden = !day;
       tip!.hidden = false;
-      placeTip(group);
       requestAnimationFrame(() => tip!.classList.add('is-on'));
     }
-
-    function hideTip() {
-      hovered = null;
-      /* a pinned trip outlives a passing hover — fall back to it, don't go
-         dark (TODO C6) */
-      if (pinned) { showRun(pinned); return; }
-      setDay(null);
+    function dropTip() {
       tip!.classList.remove('is-on');
       tip!.hidden = true;
     }
 
-    const groupOf = (target: EventTarget | null) =>
-      (target instanceof Element ? target.closest('g.dot-g') : null) as SVGGElement | null;
+    /* ---------------- one chart ---------------- */
 
-    /* ---------------- one tab stop, arrows along the row ----------------
-       238 dots used to be 238 tab stops (audit §2.3). The markup ships the
-       first dot at tabindex 0 and the rest at -1, so this is already true
-       without JavaScript; the roving index below is what makes it usable. */
+    interface Chart { svg: SVGSVGElement; reveal: () => void; shown: () => void }
 
-    const list = Array.from(dots.querySelectorAll<SVGGElement>('g.dot-g'));
-    for (const g of list) {
-      const iso = g.dataset.day;
-      if (!iso) continue;
-      const bucket = kin.get(iso);
-      if (bucket) bucket.push(g);
-      else kin.set(iso, [g]);
-    }
-    let active = 0;
+    function wireChart(svg: SVGSVGElement, o: Orient): Chart {
+      const dots = svg.querySelector<SVGGElement>('g.dots')!;
+      const runsG = svg.querySelector<SVGGElement>('g.runs');
+      const mark = svg.querySelector<SVGGElement>('g.day-mark');
+      const markStem = mark?.querySelector<SVGLineElement>('.day-mark__stem') ?? null;
+      const markCap = mark?.querySelector<SVGCircleElement>('.day-mark__cap') ?? null;
 
-    function ensureVisible(g: SVGGElement) {
-      const r = g.getBoundingClientRect();
-      const s = scroller!.getBoundingClientRect();
-      const pad = 48;
-      if (r.left < s.left + pad) scroller!.scrollLeft -= s.left + pad - r.left;
-      else if (r.right > s.right - pad) scroller!.scrollLeft += r.right - (s.right - pad);
-    }
-
-    function setActive(i: number, focus: boolean) {
-      const next = Math.min(Math.max(i, 0), list.length - 1);
-      if (!list[next]) return;
-      list[active]?.setAttribute('tabindex', '-1');
-      active = next;
-      list[active].setAttribute('tabindex', '0');
-      if (focus) {
-        list[active].focus({ preventScroll: true });
-        ensureVisible(list[active]);
+      /* ---- the climb draws itself in (again, each time this chart is shown) ---- */
+      const climb = svg.querySelector<SVGPathElement>('path.climb');
+      function reveal() {
+        if (!climb || reduced()) return;
+        climb.classList.remove('is-drawing');
+        const len = climb.getTotalLength();
+        climb.style.setProperty('--len', String(Math.ceil(len)));
+        void climb.getBoundingClientRect(); // a reflow, so the animation restarts
+        climb.classList.add('is-drawing');
       }
-    }
 
-    dots.addEventListener('keydown', (e) => {
-      const ev = e as KeyboardEvent;
-      if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
-      const g = groupOf(ev.target);
-      if (!g) return;
-      const i = list.indexOf(g);
-      if (i < 0) return;
-      let next: number;
-      switch (ev.key) {
-        case 'ArrowRight':
-        case 'ArrowDown': next = i + 1; break;
-        case 'ArrowLeft':
-        case 'ArrowUp': next = i - 1; break;
-        case 'PageDown': next = i + 10; break;
-        case 'PageUp': next = i - 10; break;
-        case 'Home': next = 0; break;
-        case 'End': next = list.length - 1; break;
-        default: return; // Enter and Space belong to panel.ts
+      /* ---- open on data, not on the empty end (Across only) ----
+         The domain starts Sep 2024 and the first five months hold one bird, so
+         a narrow window opened on an empty plot (audit §2.2). Slide the start
+         just far enough that the first screen holds birds; a laptop-width
+         window already does, and keeps the origin and its "0". Deferred until
+         the chart is displayed: a display:none box has no clientWidth. */
+      let opened = false;
+      function openOnData() {
+        if (o !== 'h' || opened || scroller!.clientWidth === 0) return;
+        opened = true;
+        if (scroller!.scrollLeft !== 0) return;
+        const box = svg.getBoundingClientRect();
+        const units = svg.viewBox.baseVal.width / (box.width || 1);
+        const win = scroller!.clientWidth * units;
+        const xs = Array.from(dots.querySelectorAll<SVGCircleElement>('.dot'))
+          .map((c) => c.cx.baseVal.value)
+          .sort((a, b) => a - b);
+        const want = Math.min(18, xs.length);
+        if (want && xs[want - 1] > win * 0.9) {
+          /* The leftmost window that holds `want` dots — searched against the
+             0.86 of the window the scroll below actually leaves for them
+             (AUDIT2 §4.1). */
+          const reach = win * (1 - 0.14);
+          let start = xs[0];
+          for (let i = 0; i + want - 1 < xs.length; i++) {
+            if (xs[i + want - 1] - xs[i] <= reach) { start = xs[i]; break; }
+          }
+          scroller!.scrollLeft = Math.max(0, start / units - scroller!.clientWidth * 0.14);
+        }
       }
-      ev.preventDefault();
-      setActive(next, true);
-    });
 
-    dots.addEventListener('pointerover', (e) => {
-      if ((e as PointerEvent).pointerType === 'touch') return;
-      const g = groupOf(e.target);
-      if (g && g !== hovered) showTip(g);
-    });
-    dots.addEventListener('pointerout', (e) => {
-      const g = groupOf(e.target);
-      const to = groupOf((e as PointerEvent).relatedTarget);
-      if (g && to !== g) hideTip();
-    });
-    dots.addEventListener('focusin', (e) => {
-      const g = groupOf(e.target);
-      if (!g) return;
-      const i = list.indexOf(g);
-      if (i >= 0) setActive(i, false);
-      showTip(g);
-    });
-    dots.addEventListener('focusout', hideTip);
-    scroller.addEventListener(
-      'scroll',
-      () => {
-        // arrowing along the row scrolls the axis; the label should follow the
-        // focused dot rather than blink out from under the keyboard
-        if (hovered && hovered === document.activeElement) placeTip(hovered);
-        else hideTip();
-      },
-      { passive: true },
-    );
+      /* ---- the day a dot belongs to (TODO C6) ----
+         238 first sightings fall on 64 days, and the dense places on the axis
+         are trips. Touching any dot names its day, lights the rest of that
+         day's cluster, and drops a stem from the axis at the day's true date,
+         which is also the honest way to show the small displacement the swarm
+         had to spend to make the big piles clickable. On the scroll the stem
+         lies across the sheet instead of down it. */
+      const kin = new Map<string, SVGGElement[]>();
+      let activeDay: string | null = null;
+      let kinEls: SVGGElement[] = [];
 
-    /* ---------------- trip brackets (TODO C6) ----------------
-       A dot is a bird, a cluster is a day, a bracket is the trip. Hover or
-       focus one and its days come up out of the swarm while the card names it
-       ("Colorado — 19–22 Aug 2025 — 4 days · 49 new birds · Denver, CO and
-       …"). Click pins it, so the cluster stays lit while you read across it;
-       click again, press Esc, or open a bird to let go.
-
-       /days/<iso> (DESIGN2 §1) now exists, so the bracket is wrapped in an
-       SVG <a> to the trip's first day and clicking it goes there — this is
-       the entry point C6 was always asking for. The pin below is what the
-       click used to do on its own and is now what the hover leaves behind
-       for the instant before the page turns; Esc still lets it go.
-
-       Nine brackets, one tab stop: the same roving index the 238 dots use. */
-
-    const runsG = el<SVGGElement>('runs');
-    const runEls = Array.from(document.querySelectorAll<SVGGraphicsElement>('#runs .run'));
-    let pinned: SVGGraphicsElement | null = null;
-    let runActive = 0;
-
-    /** light every dot of these days at once (setDay only does one day) */
-    function lightDays(isos: string[]) {
-      for (const g of kinEls) g.classList.remove('is-kin');
-      activeDay = null;
-      kinEls = [];
-      for (const iso of isos) for (const g of kin.get(iso) ?? []) kinEls.push(g);
-      mark?.classList.remove('is-on');
-      if (!kinEls.length) { dots!.classList.remove('has-day'); return; }
-      for (const g of kinEls) g.classList.add('is-kin');
-      dots!.classList.add('has-day');
-    }
-
-    function showRun(g: SVGGraphicsElement) {
-      hovered = g;
-      lightDays((g.dataset.isos ?? '').split(' ').filter(Boolean));
-      tipName!.textContent = g.dataset.region ?? '';
-      tipDate!.textContent = g.dataset.dates ?? '';
-      tipDay!.textContent = g.dataset.detail ?? '';
-      tipDay!.hidden = !g.dataset.detail;
-      tip!.hidden = false;
-      placeTip(g);
-      requestAnimationFrame(() => tip!.classList.add('is-on'));
-    }
-
-    function clearRun() {
-      if (pinned) { showRun(pinned); return; }
-      hovered = null;
-      lightDays([]);
-      tip!.classList.remove('is-on');
-      tip!.hidden = true;
-    }
-
-    function unpin() {
-      if (!pinned) return;
-      pinned.classList.remove('is-pinned');
-      pinned = null;
-      clearRun();
-    }
-
-    function setRunActive(i: number, focus: boolean) {
-      const next = Math.min(Math.max(i, 0), runEls.length - 1);
-      if (!runEls[next]) return;
-      runEls[runActive]?.setAttribute('tabindex', '-1');
-      runActive = next;
-      runEls[runActive].setAttribute('tabindex', '0');
-      if (focus) {
-        runEls[runActive].focus({ preventScroll: true });
-        ensureVisible(runEls[runActive]);
-      }
-    }
-
-    const runOf = (target: EventTarget | null) =>
-      (target instanceof Element ? target.closest('.run') : null) as SVGGraphicsElement | null;
-
-    if (runsG) {
-      runsG.addEventListener('pointerover', (e) => {
-        if ((e as PointerEvent).pointerType === 'touch') return;
-        const g = runOf(e.target);
-        if (g && g !== hovered) showRun(g);
-      });
-      runsG.addEventListener('pointerout', (e) => {
-        const g = runOf(e.target);
-        const to = runOf((e as PointerEvent).relatedTarget);
-        if (g && to !== g) clearRun();
-      });
-      runsG.addEventListener('focusin', (e) => {
-        const g = runOf(e.target);
-        if (!g) return;
-        const i = runEls.indexOf(g);
-        if (i >= 0) setRunActive(i, false);
-        showRun(g);
-      });
-      runsG.addEventListener('focusout', clearRun);
-      runsG.addEventListener('click', (e) => {
-        const g = runOf(e.target);
-        if (!g) return;
-        if (pinned === g) { unpin(); return; }
-        pinned?.classList.remove('is-pinned');
-        pinned = g;
-        g.classList.add('is-pinned');
-        showRun(g);
-      });
-      runsG.addEventListener('keydown', (e) => {
-        const ev = e as KeyboardEvent;
-        if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
-        const g = runOf(ev.target);
-        if (!g) return;
-        if (ev.key === 'Enter' || ev.key === ' ') {
-          ev.preventDefault();
-          g.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      function setDay(iso: string | null) {
+        if (iso === activeDay) return;
+        for (const g of kinEls) g.classList.remove('is-kin');
+        activeDay = iso;
+        kinEls = iso ? kin.get(iso) ?? [] : [];
+        if (!iso || !kinEls.length) {
+          dots.classList.remove('has-day');
+          mark?.classList.remove('is-on');
+          kinEls = [];
           return;
         }
-        const i = runEls.indexOf(g);
+        for (const g of kinEls) g.classList.add('is-kin');
+        dots.classList.add('has-day');
+
+        const rec = dayData[iso];
+        if (rec && rec.n > 1 && markStem && markCap && mark) {
+          if (o === 'h') {
+            let low = 0;
+            for (const g of kinEls) {
+              const c = g.querySelector('circle.dot');
+              const cy = c ? Number(c.getAttribute('cy')) : 0;
+              if (cy > low) low = cy;
+            }
+            markStem.setAttribute('x1', String(rec.x));
+            markStem.setAttribute('x2', String(rec.x));
+            markStem.setAttribute('y2', String(low + 14));
+            markCap.setAttribute('cx', String(rec.x));
+          } else {
+            /* across the sheet at the true date, from the "0" axis to just
+               past the cluster; the cap at the step's true count */
+            let far = -Infinity;
+            for (const g of kinEls) {
+              const c = g.querySelector('circle.dot');
+              const cx = c ? Number(c.getAttribute('cx')) : -Infinity;
+              if (cx > far) far = cx;
+            }
+            markStem.setAttribute('y1', String(rec.x));
+            markStem.setAttribute('y2', String(rec.x));
+            markStem.setAttribute('x2', String(far + 16));
+            markCap.setAttribute('cx', String(rec.xc || markStem.getAttribute('x1')));
+            markCap.setAttribute('cy', String(rec.x));
+          }
+          mark.classList.add('is-on');
+        } else {
+          mark?.classList.remove('is-on');
+        }
+      }
+
+      /* SVGGraphicsElement, not SVGGElement: a dot is a <g> and a trip bracket
+         is an <a>. Both are SVGGraphicsElements and the label only ever asks
+         either of them for a bounding box and a dataset. */
+      let hovered: SVGGraphicsElement | null = null;
+      let pinned: SVGGraphicsElement | null = null;
+
+      function showTip(group: SVGGElement) {
+        const name = group.dataset.name;
+        if (!name) return;
+        hovered = group;
+        const iso = group.dataset.day ?? null;
+        setDay(iso);
+        const rec = iso ? dayData[iso] : null;
+        fillTip(name, group.dataset.date ?? '', rec && rec.n > 1 ? rec.c : '');
+        placeTip(group);
+      }
+
+      function hideTip() {
+        hovered = null;
+        /* a pinned trip outlives a passing hover — fall back to it, don't go
+           dark (TODO C6) */
+        if (pinned) { showRun(pinned); return; }
+        setDay(null);
+        dropTip();
+      }
+
+      const groupOf = (target: EventTarget | null) =>
+        (target instanceof Element ? target.closest('g.dot-g') : null) as SVGGElement | null;
+
+      /* ---- one tab stop, arrows along the row ----
+         238 dots used to be 238 tab stops (audit §2.3). The markup ships the
+         first dot at tabindex 0 and the rest at -1, so this is already true
+         without JavaScript; the roving index below is what makes it usable. */
+      const list = Array.from(dots.querySelectorAll<SVGGElement>('g.dot-g'));
+      for (const g of list) {
+        const iso = g.dataset.day;
+        if (!iso) continue;
+        const bucket = kin.get(iso);
+        if (bucket) bucket.push(g);
+        else kin.set(iso, [g]);
+      }
+      let active = 0;
+
+      function ensureVisible(g: Element) {
+        const r = g.getBoundingClientRect();
+        const pad = 48;
+        if (o === 'h') {
+          const s = scroller!.getBoundingClientRect();
+          if (r.left < s.left + pad) scroller!.scrollLeft -= s.left + pad - r.left;
+          else if (r.right > s.right - pad) scroller!.scrollLeft += r.right - (s.right - pad);
+        } else {
+          /* the page is the scroller; keep the focused dot clear of the
+             compass's corner as well as the edges */
+          const safe = safeEl ? safeEl.getBoundingClientRect().height : 0;
+          const vh = window.innerHeight;
+          if (r.top < pad) window.scrollBy(0, r.top - pad);
+          else if (r.bottom > vh - safe - pad) window.scrollBy(0, r.bottom - (vh - safe - pad));
+        }
+      }
+
+      function setActive(i: number, focus: boolean) {
+        const next = Math.min(Math.max(i, 0), list.length - 1);
+        if (!list[next]) return;
+        list[active]?.setAttribute('tabindex', '-1');
+        active = next;
+        list[active].setAttribute('tabindex', '0');
+        if (focus) {
+          list[active].focus({ preventScroll: true });
+          ensureVisible(list[active]);
+        }
+      }
+
+      dots.addEventListener('keydown', (e) => {
+        const ev = e as KeyboardEvent;
+        if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        const g = groupOf(ev.target);
+        if (!g) return;
+        const i = list.indexOf(g);
+        if (i < 0) return;
         let next: number;
         switch (ev.key) {
           case 'ArrowRight':
           case 'ArrowDown': next = i + 1; break;
           case 'ArrowLeft':
           case 'ArrowUp': next = i - 1; break;
+          case 'PageDown': next = i + 10; break;
+          case 'PageUp': next = i - 10; break;
           case 'Home': next = 0; break;
-          case 'End': next = runEls.length - 1; break;
-          default: return;
+          case 'End': next = list.length - 1; break;
+          default: return; // Enter and Space belong to panel.ts
         }
         ev.preventDefault();
-        setRunActive(next, true);
+        setActive(next, true);
       });
-      /* Esc lets a pinned trip go. Capture phase and preventDefault, because
-         Compass.astro reads Esc as "leave this view" and checks
-         defaultPrevented: the most local state has to unwind first, exactly
-         as the bird panel does. */
-      document.addEventListener('keydown', (e) => {
-        const ev = e as KeyboardEvent;
-        if (ev.key !== 'Escape' || !pinned || isPanelOpen()) return;
-        ev.preventDefault();
-        unpin();
-      }, true);
+
+      dots.addEventListener('pointerover', (e) => {
+        if ((e as PointerEvent).pointerType === 'touch') return;
+        const g = groupOf(e.target);
+        if (g && g !== hovered) showTip(g);
+      });
+      dots.addEventListener('pointerout', (e) => {
+        const g = groupOf(e.target);
+        const to = groupOf((e as PointerEvent).relatedTarget);
+        if (g && to !== g) hideTip();
+      });
+      dots.addEventListener('focusin', (e) => {
+        const g = groupOf(e.target);
+        if (!g) return;
+        const i = list.indexOf(g);
+        if (i >= 0) setActive(i, false);
+        showTip(g);
+      });
+      dots.addEventListener('focusout', hideTip);
+
+      /* arrowing along the row scrolls the axis (or the page); the label
+         should follow the focused dot rather than blink out from under the
+         keyboard */
+      const onScroll = () => {
+        if (hovered && hovered === document.activeElement) placeTip(hovered);
+        else hideTip();
+      };
+      if (o === 'h') scroller!.addEventListener('scroll', onScroll, { passive: true });
+      else window.addEventListener('scroll', () => { if (svg.getClientRects().length) onScroll(); }, { passive: true });
+
+      /* ---- trip brackets (TODO C6) ----
+         A dot is a bird, a cluster is a day, a bracket is the trip. Hover or
+         focus one and its days come up out of the swarm while the card names
+         it. Click pins it, so the cluster stays lit while you read across it;
+         click again, press Esc, or open a bird to let go. The bracket is an
+         <a> to the trip's first day, so a click also turns the page. Ten
+         brackets, one tab stop: the same roving index the 238 dots use. */
+      const runEls = Array.from(svg.querySelectorAll<SVGGraphicsElement>('g.runs .run'));
+      let runActive = 0;
+
+      /** light every dot of these days at once (setDay only does one day) */
+      function lightDays(isos: string[]) {
+        for (const g of kinEls) g.classList.remove('is-kin');
+        activeDay = null;
+        kinEls = [];
+        for (const iso of isos) for (const g of kin.get(iso) ?? []) kinEls.push(g);
+        mark?.classList.remove('is-on');
+        if (!kinEls.length) { dots.classList.remove('has-day'); return; }
+        for (const g of kinEls) g.classList.add('is-kin');
+        dots.classList.add('has-day');
+      }
+
+      function showRun(g: SVGGraphicsElement) {
+        hovered = g;
+        lightDays((g.dataset.isos ?? '').split(' ').filter(Boolean));
+        fillTip(g.dataset.region ?? '', g.dataset.dates ?? '', g.dataset.detail ?? '');
+        placeTip(g);
+      }
+
+      function clearRun() {
+        if (pinned) { showRun(pinned); return; }
+        hovered = null;
+        lightDays([]);
+        dropTip();
+      }
+
+      function unpin() {
+        if (!pinned) return;
+        pinned.classList.remove('is-pinned');
+        pinned = null;
+        clearRun();
+      }
+
+      function setRunActive(i: number, focus: boolean) {
+        const next = Math.min(Math.max(i, 0), runEls.length - 1);
+        if (!runEls[next]) return;
+        runEls[runActive]?.setAttribute('tabindex', '-1');
+        runActive = next;
+        runEls[runActive].setAttribute('tabindex', '0');
+        if (focus) {
+          runEls[runActive].focus({ preventScroll: true });
+          ensureVisible(runEls[runActive]);
+        }
+      }
+
+      const runOf = (target: EventTarget | null) =>
+        (target instanceof Element ? target.closest('.run') : null) as SVGGraphicsElement | null;
+
+      if (runsG) {
+        runsG.addEventListener('pointerover', (e) => {
+          if ((e as PointerEvent).pointerType === 'touch') return;
+          const g = runOf(e.target);
+          if (g && g !== hovered) showRun(g);
+        });
+        runsG.addEventListener('pointerout', (e) => {
+          const g = runOf(e.target);
+          const to = runOf((e as PointerEvent).relatedTarget);
+          if (g && to !== g) clearRun();
+        });
+        runsG.addEventListener('focusin', (e) => {
+          const g = runOf(e.target);
+          if (!g) return;
+          const i = runEls.indexOf(g);
+          if (i >= 0) setRunActive(i, false);
+          showRun(g);
+        });
+        runsG.addEventListener('focusout', clearRun);
+        runsG.addEventListener('click', (e) => {
+          const g = runOf(e.target);
+          if (!g) return;
+          if (pinned === g) { unpin(); return; }
+          pinned?.classList.remove('is-pinned');
+          pinned = g;
+          g.classList.add('is-pinned');
+          showRun(g);
+        });
+        runsG.addEventListener('keydown', (e) => {
+          const ev = e as KeyboardEvent;
+          if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+          const g = runOf(ev.target);
+          if (!g) return;
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            g.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            return;
+          }
+          const i = runEls.indexOf(g);
+          let next: number;
+          switch (ev.key) {
+            case 'ArrowRight':
+            case 'ArrowDown': next = i + 1; break;
+            case 'ArrowLeft':
+            case 'ArrowUp': next = i - 1; break;
+            case 'Home': next = 0; break;
+            case 'End': next = runEls.length - 1; break;
+            default: return;
+          }
+          ev.preventDefault();
+          setRunActive(next, true);
+        });
+        /* Esc lets a pinned trip go. Capture phase and preventDefault, because
+           Compass.astro reads Esc as "leave this view" and checks
+           defaultPrevented: the most local state has to unwind first, exactly
+           as the bird panel does. */
+        document.addEventListener('keydown', (e) => {
+          const ev = e as KeyboardEvent;
+          if (ev.key !== 'Escape' || !pinned || isPanelOpen()) return;
+          ev.preventDefault();
+          unpin();
+        }, true);
+      }
+
+      // the label must not hang around behind the overlay
+      document.addEventListener('bird:open', hideTip);
+      document.addEventListener('bird:open', unpin);
+
+      return {
+        svg,
+        reveal,
+        shown() { openOnData(); reveal(); },
+      };
     }
 
-    // the label must not hang around behind the overlay
-    document.addEventListener('bird:open', hideTip);
-    document.addEventListener('bird:open', unpin);
+    const charts: Record<Orient, Chart | null> = { h: null, v: null };
+    for (const svg of Array.from(root.querySelectorAll<SVGSVGElement>('svg.tl__svg'))) {
+      const o = (svg.dataset.o === 'v' ? 'v' : 'h') as Orient;
+      charts[o] = wireChart(svg, o);
+    }
 
-    /* ---- vertical wheel scrolls the axis sideways (the page barely scrolls) ---- */
+    /* ---------------- vertical wheel scrolls the axis sideways (Across) ----
+       The page barely scrolls in that mode. Down needs nothing: the page is
+       the scroll. */
     scroller.addEventListener(
       'wheel',
       (e) => {
@@ -1119,6 +1615,153 @@ const legend = TYPE_ORDER.filter((t) => counts.has(t)).map((t) => ({
       },
       { passive: false },
     );
+
+    /* ---------------- the whole record, small ----------------
+       A scrollbar for #scroller drawn as the record itself. Everything here
+       is a proportion between three widths: the strip's, the chart svg's and
+       the scroller's window. */
+    const whole = el<HTMLElement>('tl-whole');
+    const strip = whole?.querySelector<SVGSVGElement>('svg.tl__whole-svg') ?? null;
+    const hSvg = charts.h?.svg ?? null;
+    if (whole && strip && hSvg) {
+      const W = strip.viewBox.baseVal.width;
+      const OH = strip.viewBox.baseVal.height;
+      const hereTop = strip.querySelector<SVGPathElement>('.whole-here__top');
+      const hereBot = strip.querySelector<SVGPathElement>('.whole-here__bottom');
+      const cursor = strip.querySelector<SVGLineElement>('.whole-cursor');
+      const ppd = Number(strip.dataset.ppd) || 9;
+      const pad = Number(strip.dataset.pad) || 0;
+      const start = Date.UTC(
+        Number((strip.dataset.start ?? '2024-09-01').slice(0, 4)),
+        Number((strip.dataset.start ?? '2024-09-01').slice(5, 7)) - 1,
+        Number((strip.dataset.start ?? '2024-09-01').slice(8, 10)),
+      );
+      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const dayList = Object.entries(dayData).map(([iso, r]) => ({ iso, x: r.x, c: r.c, n: r.n }));
+
+      /** the chart's visible stretch, in time units */
+      function visible(): [number, number] | null {
+        const box = hSvg!.getBoundingClientRect();
+        if (!box.width) return null;
+        const s = scroller.getBoundingClientRect();
+        const units = W / box.width;
+        return [clamp((s.left - box.left) * units, 0, W), clamp((s.right - box.left) * units, 0, W)];
+      }
+      /** time units -> a scrollLeft that centres them */
+      function scrollTo(u: number, smooth: boolean) {
+        const box = hSvg!.getBoundingClientRect();
+        if (!box.width) return;
+        const scale = box.width / W;
+        const svgLeftInContent = box.left - scroller.getBoundingClientRect().left + scroller.scrollLeft;
+        const left = svgLeftInContent + u * scale - scroller.clientWidth / 2;
+        scroller.scrollTo({ left: clamp(left, 0, scroller.scrollWidth - scroller.clientWidth), behavior: smooth && !reduced() ? 'smooth' : 'auto' });
+      }
+      function drawHere() {
+        const v = visible();
+        if (!v || !hereTop || !hereBot) return;
+        const [a, b] = v;
+        hereTop.setAttribute('d', `M ${a.toFixed(1)} 6 V 0.5 H ${b.toFixed(1)} V 6`);
+        hereBot.setAttribute('d', `M ${a.toFixed(1)} ${OH - 6} V ${OH - 0.5} H ${b.toFixed(1)} V ${OH - 6}`);
+        const room = scroller.scrollWidth - scroller.clientWidth;
+        strip!.setAttribute('aria-valuenow', String(room > 0 ? Math.round((scroller.scrollLeft / room) * 100) : 0));
+      }
+      const unitsAt = (clientX: number) => {
+        const r = strip!.getBoundingClientRect();
+        return clamp(((clientX - r.left) / (r.width || 1)) * W, 0, W);
+      };
+      const monthAt = (u: number) => {
+        const d = new Date(start + ((u - pad) / ppd) * 86_400_000);
+        return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+      };
+      /** the day under the pointer, if one is within 6px */
+      function dayAt(u: number) {
+        const r = strip!.getBoundingClientRect();
+        const tol = (6 / (r.width || 1)) * W;
+        let best: (typeof dayList)[number] | null = null;
+        for (const d of dayList) {
+          const dist = Math.abs(d.x - u);
+          if (dist <= tol && (!best || dist < Math.abs(best.x - u))) best = d;
+        }
+        return best;
+      }
+
+      let dragging = false;
+      strip.addEventListener('pointermove', (e) => {
+        const u = unitsAt(e.clientX);
+        if (cursor) {
+          cursor.setAttribute('x1', String(u));
+          cursor.setAttribute('x2', String(u));
+          cursor.classList.add('is-on');
+        }
+        if (dragging) scrollTo(u, false);
+        const day = dayAt(u);
+        const r = strip!.getBoundingClientRect();
+        const px = r.left + (u / W) * r.width;
+        fillTip(day ? day.c.split(' · ')[0] : monthAt(u), day ? day.c.split(' · ').slice(1).join(' · ') : 'the whole record', '');
+        placeTipAt(new DOMRect(px, r.top, 0, r.height));
+      });
+      strip.addEventListener('pointerleave', () => {
+        cursor?.classList.remove('is-on');
+        if (!dragging) dropTip();
+      });
+      strip.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        dragging = true;
+        strip!.setPointerCapture(e.pointerId);
+        scrollTo(unitsAt(e.clientX), true);
+      });
+      const stop = () => { dragging = false; };
+      strip.addEventListener('pointerup', stop);
+      strip.addEventListener('pointercancel', stop);
+      strip.addEventListener('keydown', (e) => {
+        const ev = e as KeyboardEvent;
+        if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        const w = scroller.clientWidth;
+        let left: number;
+        switch (ev.key) {
+          case 'ArrowRight': left = scroller.scrollLeft + w / 4; break;
+          case 'ArrowLeft': left = scroller.scrollLeft - w / 4; break;
+          case 'PageDown': left = scroller.scrollLeft + w; break;
+          case 'PageUp': left = scroller.scrollLeft - w; break;
+          case 'Home': left = 0; break;
+          case 'End': left = scroller.scrollWidth; break;
+          default: return;
+        }
+        ev.preventDefault();
+        scroller.scrollTo({ left: clamp(left, 0, scroller.scrollWidth - scroller.clientWidth), behavior: reduced() ? 'auto' : 'smooth' });
+      });
+      scroller.addEventListener('scroll', drawHere, { passive: true });
+      window.addEventListener('resize', drawHere);
+      // the first draw waits for the open-on-data scroll below
+      requestAnimationFrame(drawHere);
+    }
+
+    /* ---------------- Across / Down ----------------
+       The inline script above may already have set data-orient from storage;
+       this keeps the two buttons truthful, runs the shown chart's arrival
+       (open on data, the climb drawing in), and writes the choice back. */
+    const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>('.tl__o'));
+    function apply(o: Orient, persist: boolean) {
+      root!.dataset.orient = o;
+      for (const b of buttons) b.setAttribute('aria-pressed', String(b.dataset.o === o));
+      if (persist) {
+        try { localStorage.setItem(KEY, o); } catch { /* private window, quota: the choice just does not stick */ }
+      }
+      // give the layout a frame to flip display before measuring the shown chart
+      requestAnimationFrame(() => {
+        charts[o]?.shown();
+        if (o === 'h' && whole) whole.dispatchEvent(new Event('scroll'));
+        scroller.dispatchEvent(new Event('scroll'));
+      });
+    }
+    for (const b of buttons) {
+      b.addEventListener('click', () => {
+        const o = (b.dataset.o === 'v' ? 'v' : 'h') as Orient;
+        if (root!.dataset.orient === o) return;
+        apply(o, true);
+      });
+    }
+    apply((root.dataset.orient === 'v' ? 'v' : 'h') as Orient, false);
   }
 
   setup();

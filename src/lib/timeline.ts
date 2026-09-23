@@ -70,6 +70,75 @@ export const YEAR_LABEL_Y = 515;
 export const DOT_R = 5;
 export const HIT_R = 20;
 
+/* ---------- the hanging scroll (vertical) ----------
+ *
+ * The same record hung as a 卷轴, read down the page with the wheel. On the
+ * chart, x is the date and y is the swarm's dodging room, which carries no
+ * meaning. Turned on its side that would leave the whole width of the sheet
+ * empty — the first version did exactly that and was rejected for it. On a
+ * scroll DOWN is spoken for by time, so ACROSS has to mean something, and
+ * what it means here is the running count: a dot sits at the x of how many
+ * species had been seen when it was added. The flock is then the staircase
+ * itself, opening from the left margin at 0 to the right margin at 238, and
+ * "the line climbs one step for every bird" stops being the caption and
+ * becomes the thing you are reading. The season washes are full-width
+ * horizontal bands — the registers of a mounted scroll — and every word on
+ * the sheet is set horizontally; no reader tilts their head.
+ *
+ * The constants: a 52-unit ruler on the left for month and year labels; the
+ * "0" axis at V_X0 and the "238" ceiling at V_X1, with a count rule every 50
+ * between them, and 24 units of paper past the ceiling. The season names
+ * are set horizontally at the head of their own band, as on the chart — a
+ * register heading — nudged right past the climb and its dots where those
+ * are in the way (see Timeline.astro); there is no right-hand margin strip.
+ *
+ * Scale: the sheet is drawn `min(100%, V_MAX_PX)` wide. At 880px that is
+ * 1.375 px/unit — dots 13.8px, hit rings 55px, nearest neighbours 33px, the
+ * record 9,300px long, 10 screens at 900 tall. A scroll is long; that is
+ * what the wheel is for. At 390px the sheet is 343px, 0.536 px/unit, and
+ * the hit ring is raised to V_HIT_R_PHONE (23 units = 24.6px) — hence a
+ * 24-unit lattice here rather than the chart's 22, since the pitch must
+ * stay one unit above the largest ring for C2 to hold by construction.
+ *
+ * Why the width is spent in pixels and not in units. The count axis is the
+ * one that earns the width, and a wider field in *units* would let a day
+ * spread over fewer birds of count — but the same svg serves the phone,
+ * where the ring must stay 24px, so the ring in units (12px ÷ 343px/VW)
+ * grows with VW and the pitch with it. Measured (sweep VW 640 → 1000, pitch
+ * 24 → 36): count displacement mean 9.5 → 8.9 birds, p90 flat at 21–23,
+ * worst 62 → 56; date displacement mean 2.0 → 3.3 days, worst 10.7 → 20.
+ * A loss on balance. Drawing the same 640 units at 880px changes neither
+ * figure and gives the staircase 26% more room on a 1440 window.
+ */
+export const VW = 640;
+export const V_RULER_X = 52; /* right edge of the month and year labels */
+export const V_X0 = 84; /* count 0 — the axis */
+export const V_X1 = VW - 24; /* 616 — count 238, the ceiling */
+export const V_STEP = 24; /* lattice pitch on the scroll, both axes */
+export const V_DOT_R = 5;
+export const V_HIT_R_PHONE = 23;
+export const V_MAX_PX = 880;
+/* Cost of a unit of count displacement against a unit of date displacement.
+   Spreading along a day's own step is free — those birds were counted in
+   that step, wherever in it they sit. Beyond the step it is a count lie, at
+   0.8 per unit; a date lie is 1 per unit. Measured over the real 238 at
+   weights 0.6–2.0: the worst count lie hardly moves (65–76 birds at ≤1.0,
+   43 at 2.0) while the worst date lie doubles (10.7 → 18.7 days), because
+   Colorado — 49 birds in four consecutive days, 36 units of y — cannot fit
+   a 24-unit lattice in a 512-unit field without either eleven rows of time
+   or most of the width; the chart hit the same wall and paid 7.3 days with
+   a free axis to spend. At 0.8: 121 dots on their exact date, mean 2.0
+   days, p90 5.3, worst 10.7; 83 inside their own step, mean 10 birds of
+   count, p90 23, worst 65. The hovered day's stem shows the true date, and
+   its cap the true count, so neither lie is hidden. See swarmV(). */
+export const V_XW = 0.8;
+export const V_COUNT_RULE = 50;
+
+/** x on the scroll for a running count */
+export function countX(count: number, total: number): number {
+  return V_X0 + (count / Math.max(total, 1)) * (V_X1 - V_X0);
+}
+
 /* ---------- dates ---------- */
 
 const DAY = 86_400_000;
@@ -84,6 +153,8 @@ const END_T = utc(DOMAIN_END);
 
 export const TOTAL_DAYS = Math.round((END_T - START_T) / DAY);
 export const W = Math.round(TOTAL_DAYS * PX_PER_DAY + PAD_X * 2);
+/** the hanging scroll's length in viewBox units is the chart's width — time is time */
+export const VL = W;
 
 /** x position in viewBox units for an ISO date. */
 export function x(iso: string): number {
@@ -182,8 +253,25 @@ function bandPath(left: [number, number][], right: [number, number][]): string {
   return `${down} ${up} Z`;
 }
 
-/** Contiguous runs of one season, merged so we emit 8 shapes instead of 24. */
-export function seasonBands(): Band[] {
+/* The same edge on the hanging scroll (see "the hanging scroll" below):
+   time runs down, so a season's boundary is a line drawn *across* the sheet
+   at y = t, and the wash is the stripe between two of them. Same pen, same
+   wobble, same seed rule; a different sheet width. */
+function bandEdgeV(t: number, i: number): [number, number][] {
+  return inkLine([0, t], [VW, t], 211 + i * 13, {
+    wobble: BAND_EDGE_WOBBLE,
+    steps: BAND_EDGE_STEPS,
+    tension: 0.9,
+    pinEnds: false,
+  }).pts;
+}
+
+export type Orient = 'h' | 'v';
+
+/** Contiguous runs of one season, merged so we emit 8 shapes instead of 24.
+ *  `x`/`width` are along the time axis whichever way it runs: on the scroll
+ *  the caller reads them as y / height. */
+export function seasonBands(orient: Orient = 'h'): Band[] {
   const spans: { season: Season; x: number; width: number }[] = [];
   for (const mo of eachMonth()) {
     const season = SEASON_OF_MONTH[mo.month];
@@ -203,6 +291,13 @@ export function seasonBands(): Band[] {
   tail.width = W - tail.x;
 
   /* the two outer edges are the sheet's own, and stay straight */
+  if (orient === 'v') {
+    const edges: [number, number][][] = spans.map((s, i) =>
+      i === 0 ? [[0, 0], [VW, 0]] : bandEdgeV(s.x, i),
+    );
+    edges.push([[0, W], [VW, W]]);
+    return spans.map((s, i) => ({ ...s, d: bandPath(edges[i], edges[i + 1]) }));
+  }
   const edges: [number, number][][] = spans.map((s, i) =>
     i === 0 ? [[0, 0], [0, H]] : bandEdge(s.x, i),
   );
@@ -245,11 +340,19 @@ export interface Pt { x: number; y: number }
 /**
  * Monotone cubic (Fritsch-Carlson). Keeps the climb from ever dipping back
  * down between samples, which a plain smoothing spline would do at clusters.
+ *
+ * `swap` emits every coordinate pair the other way round. The curve is still
+ * fitted with `x` as the independent variable — time — so on the hanging
+ * scroll, where time is y, the same fit is written out as (y, x) and stays
+ * monotone in time exactly as it is here.
  */
-export function monotonePath(pts: Pt[]): string {
+export function monotonePath(pts: Pt[], swap = false): string {
+  const P = swap
+    ? (x: number, y: number) => `${y.toFixed(2)} ${x.toFixed(2)}`
+    : (x: number, y: number) => `${x.toFixed(2)} ${y.toFixed(2)}`;
   const n = pts.length;
   if (n === 0) return '';
-  if (n === 1) return `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
+  if (n === 1) return `M ${P(pts[0].x, pts[0].y)}`;
 
   const dx: number[] = [];
   const delta: number[] = [];
@@ -280,25 +383,27 @@ export function monotonePath(pts: Pt[]): string {
     }
   }
 
-  let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
+  let d = `M ${P(pts[0].x, pts[0].y)}`;
   for (let i = 0; i < n - 1; i++) {
     const t = dx[i] / 3;
     const c1x = pts[i].x + t;
     const c1y = pts[i].y + m[i] * t;
     const c2x = pts[i + 1].x - t;
     const c2y = pts[i + 1].y - m[i + 1] * t;
-    d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${pts[i + 1].x.toFixed(2)} ${pts[i + 1].y.toFixed(2)}`;
+    d += ` C ${P(c1x, c1y)}, ${P(c2x, c2y)}, ${P(pts[i + 1].x, pts[i + 1].y)}`;
   }
   return d;
 }
 
-/** One sample per distinct date: how many species had been seen by then. */
-export function cumulativePoints(dates: string[]): Pt[] {
+/** One sample per distinct date: how many species had been seen by then.
+ *  `yZero`/`yFull` are where 0 and the total sit on the perpendicular axis;
+ *  the chart uses AXIS_Y -> CURVE_TOP, the navigator strip its own two. */
+export function cumulativePoints(dates: string[], yZero = AXIS_Y, yFull = CURVE_TOP): Pt[] {
   const total = dates.length;
   if (!total) return [];
-  const yFor = (c: number) => AXIS_Y - (c / total) * (AXIS_Y - CURVE_TOP);
+  const yFor = (c: number) => yZero - (c / total) * (yZero - yFull);
 
-  const pts: Pt[] = [{ x: 0, y: AXIS_Y }];
+  const pts: Pt[] = [{ x: 0, y: yZero }];
   let count = 0;
   for (let i = 0; i < total; i++) {
     count += 1;
@@ -861,6 +966,302 @@ export function layoutRuns(
       label,
       dates,
       detail: `${howLong} · ${what} · ${where}`,
+    });
+  }
+  return out;
+}
+
+/* ---------- the whole record: a navigator under the horizontal chart ----------
+ *
+ * The horizontal chart is 6,762 units of time drawn at 0.6–1.15 px/unit, so a
+ * laptop window sees a fifth of it and the climb never appears whole. The
+ * owner's ask was "a page-width timeline you can open up where it is dense".
+ * Two honest answers were weighed:
+ *
+ *   (a) zoom the chart itself — fit all 6,762 units into the page and let a
+ *       click magnify a stretch. At page width that is 0.19 px/unit: dots
+ *       under 2px and 4px apart, the smudge C2 was built to undo, and the
+ *       season names and month ticks at 2px. Everything the chart is would
+ *       have to be redrawn for the far level anyway.
+ *   (b) keep the chart exactly as C2 and C6 measured it, and draw the whole
+ *       record once more, small, as a strip it is navigated with.
+ *
+ * (b) is what this block is. The strip is *linear* time, like the chart,
+ * unlike the home page's When formation. flockView.ts gave that formation a
+ * rank axis — one slot per day out — because on a page-width linear axis
+ * 238 birds drawn as individual discs are a pile. The strip agrees with that
+ * finding and does not try: it draws each day as a bar (a skyline of first
+ * sightings), the climb whole from 0 to 238, and the season washes, and it
+ * hands individual birds to the chart beneath it, where the swarm gives them
+ * room. The two axes measure the same thing, so the "here" bracket that
+ * shows the chart's viewport on the strip is a plain proportion.
+ *
+ * Units along time are the chart's own (`x(iso)`), so a scroll offset maps
+ * to the strip with one factor. The strip is drawn with
+ * preserveAspectRatio="none" at a fixed CSS height: x is squeezed ~0.18×,
+ * y is 1:1, strokes are non-scaling. Rects and paths survive that; text
+ * does not, so the year labels are HTML positioned in %.
+ */
+
+export const O_H = 44; /* strip height, CSS px and viewBox units alike; 44
+   so that at 1440×900 the strip, the legend and the days line all fit in
+   the compass reserve under the chart */
+export const O_AXIS_Y = 26;
+export const O_TOP = 5; /* the climb's ceiling — 238 */
+export const O_BAR_BOTTOM = 42;
+/** a day's bar is two days wide, centred on the day: 18 units ≈ 3px at 1440.
+ *  Consecutive days of a trip fuse into one block, which is what a trip is. */
+export const O_BAR_W = PX_PER_DAY * 2;
+export const O_BAR_MIN_H = 2;
+
+export interface SkyBar { iso: string; x: number; w: number; y: number; h: number; count: number }
+
+/** One bar per birding day, hanging from the axis: height ∝ new birds. */
+export function skyline(days: { iso: string; count: number }[]): SkyBar[] {
+  const max = days.reduce((m, d) => Math.max(m, d.count), 1);
+  const room = O_BAR_BOTTOM - O_AXIS_Y;
+  return days.map((d) => {
+    const h = Math.max(O_BAR_MIN_H, (d.count / max) * room);
+    return { iso: d.iso, x: x(d.iso) - O_BAR_W / 2, w: O_BAR_W, y: O_AXIS_Y, h, count: d.count };
+  });
+}
+
+/** Straight-edged season rects for the strip. The pen edge would be a 2px
+ *  wobble at 0.18×, i.e. a blurry line — the hand is saved for the chart. */
+export function seasonRects(): { season: Season; x: number; width: number }[] {
+  const spans: { season: Season; x: number; width: number }[] = [];
+  for (const mo of eachMonth()) {
+    const season = SEASON_OF_MONTH[mo.month];
+    const x0 = clampX(toX(mo.start));
+    const x1 = clampX(toX(mo.end));
+    const last = spans[spans.length - 1];
+    if (last && last.season === season && Math.abs(last.x + last.width - x0) < 0.01) last.width = x1 - last.x;
+    else spans.push({ season, x: x0, width: x1 - x0 });
+  }
+  if (spans.length) {
+    spans[0].width += spans[0].x;
+    spans[0].x = 0;
+    spans[spans.length - 1].width = W - spans[spans.length - 1].x;
+  }
+  return spans;
+}
+
+/* ---------- the swarm on the scroll ----------
+ *
+ * Same problem as swarm(), one more axis with meaning. A bird's target is
+ * (x = the count when it was added, y = its date); a day's birds are
+ * consecutive counts, so a day's true footprint is a horizontal step of
+ * width count × (V_X1 − V_X0)/total — about 2.15 units a bird — at one y.
+ * Twenty-one 11-unit dots do not fit in a 45-unit step, so they dodge.
+ *
+ * Rule: candidates are a grid of pitch V_STEP centred on the day's own
+ * (step midpoint, date); a site is free when it is ≥ V_STEP from every dot
+ * already placed — a distance check, not a shared lattice, exactly as on
+ * the chart, and what makes "no centre inside a neighbour's hit ring" true
+ * by construction (V_STEP 24 > the largest ring, 23). Cost is
+ * |Δdate| + V_XW × |Δcount beyond the step|, so a day spreads along its own
+ * step for nothing, then sideways into neighbouring counts at 0.6 a unit,
+ * and only then into neighbouring days. Days are laid biggest-first so the
+ * piles keep their dates and the thin days do the moving; within a day the
+ * order is the hash, as on the chart. Sites are kept inside [V_X0, V_X1]:
+ * the flock never leaves the counted field.
+ */
+
+export interface SwarmVDot { id: string; iso: string; x: number; y: number; dt: number; dx: number }
+export interface SwarmVDay {
+  iso: string;
+  /** the day's true y (date) and the x of its step's midpoint */
+  y: number; xc: number;
+  count: number;
+  /** extents of the dots as placed */
+  top: number; bottom: number; left: number; right: number;
+}
+export interface SwarmV {
+  dots: SwarmVDot[]; days: SwarmVDay[];
+  /** date displacement, units (÷ PX_PER_DAY for days) */
+  maxDt: number; meanDt: number; exactT: number;
+  /** count displacement beyond the day's own step, units */
+  maxDx: number; meanDx: number; exactX: number;
+}
+
+export interface SwarmVOpts { xw?: number; step?: number; x0?: number; x1?: number }
+export function swarmV(list: SwarmInput[], opts: SwarmVOpts = {}): SwarmV {
+  const xw = opts.xw ?? V_XW;
+  const STEP = opts.step ?? V_STEP;
+  const X0 = opts.x0 ?? V_X0;
+  const X1 = opts.x1 ?? V_X1;
+  const dated = list
+    .map((b) => ({ b, iso: (b.firstSpotted ?? '').slice(0, 10) }))
+    .filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.iso))
+    .sort((p, q) => (p.iso < q.iso ? -1 : p.iso > q.iso ? 1 : p.b.id.localeCompare(q.b.id)));
+  const total = dated.length;
+  const perBird = (X1 - X0) / Math.max(total, 1);
+
+  /* running count per day */
+  const byDay = new Map<string, { bs: SwarmInput[]; before: number }>();
+  let n = 0;
+  for (const r of dated) {
+    const d = byDay.get(r.iso);
+    if (d) d.bs.push(r.b);
+    else byDay.set(r.iso, { bs: [r.b], before: n });
+    n += 1;
+  }
+  const days = [...byDay.entries()]
+    .map(([iso, d]) => ({
+      iso,
+      y: x(iso),
+      xc: X0 + ((d.before + d.bs.length / 2) / Math.max(total, 1)) * (X1 - X0),
+      half: (d.bs.length * perBird) / 2,
+      bs: [...d.bs].sort(
+        (a, b) =>
+          jitterFor(a.id + (a.slug ?? '')) - jitterFor(b.id + (b.slug ?? '')) ||
+          a.id.localeCompare(b.id),
+      ),
+    }))
+    .sort((a, b) => b.bs.length - a.bs.length || (a.iso < b.iso ? -1 : 1));
+
+  const BW = STEP * 2;
+  const buckets = new Map<number, { x: number; y: number }[]>();
+  const free = (px: number, py: number) => {
+    const b0 = Math.floor((py - STEP) / BW);
+    const b1 = Math.floor((py + STEP) / BW);
+    for (let b = b0; b <= b1; b++) {
+      const cell = buckets.get(b);
+      if (!cell) continue;
+      for (const q of cell) {
+        const dx = q.x - px;
+        const dy = q.y - py;
+        if (dx * dx + dy * dy < STEP * STEP - 1e-6) return false;
+      }
+    }
+    return true;
+  };
+
+  const dots: SwarmVDot[] = [];
+  const out: SwarmVDay[] = [];
+  let sumDt = 0, sumDx = 0, maxDt = 0, maxDx = 0, exactT = 0, exactX = 0;
+  const REACH = 14;
+
+  for (const day of days) {
+    let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+    for (const bird of day.bs) {
+      let best: { x: number; y: number; dt: number; dx: number; cost: number } | null = null;
+      for (let j = 0; j <= REACH; j++) {
+        for (const sj of j === 0 ? [0] : [1, -1]) {
+          const py = day.y + sj * j * STEP;
+          const dt = j * STEP;
+          if (best && dt >= best.cost) break; /* rows only get dearer */
+          for (let i = 0; i <= REACH; i++) {
+            for (const si of i === 0 ? [0] : [1, -1]) {
+              const px = day.xc + si * i * STEP;
+              if (px < X0 || px > X1) continue;
+              const beyond = Math.max(0, i * STEP - day.half);
+              const cost = dt + xw * beyond;
+              if (best && cost >= best.cost - 1e-9) continue;
+              if (!free(px, py)) continue;
+              best = { x: px, y: py, dt, dx: beyond, cost };
+            }
+          }
+        }
+      }
+      /* unreachable with 14 rows of reach; never drop a bird */
+      const seat = best ?? { x: Math.min(Math.max(day.xc, X0), X1), y: day.y, dt: 0, dx: 0, cost: 0 };
+      const key = Math.floor(seat.y / BW);
+      const cell = buckets.get(key);
+      if (cell) cell.push({ x: seat.x, y: seat.y });
+      else buckets.set(key, [{ x: seat.x, y: seat.y }]);
+      dots.push({ id: bird.id, iso: day.iso, x: seat.x, y: seat.y, dt: seat.dt, dx: seat.dx });
+      sumDt += seat.dt; sumDx += seat.dx;
+      if (seat.dt > maxDt) maxDt = seat.dt;
+      if (seat.dx > maxDx) maxDx = seat.dx;
+      if (seat.dt < 1e-9) exactT += 1;
+      if (seat.dx < 1e-9) exactX += 1;
+      if (seat.y < top) top = seat.y;
+      if (seat.y > bottom) bottom = seat.y;
+      if (seat.x < left) left = seat.x;
+      if (seat.x > right) right = seat.x;
+    }
+    out.push({ iso: day.iso, y: day.y, xc: day.xc, count: day.bs.length, top, bottom, left, right });
+  }
+  out.sort((a, b) => (a.iso < b.iso ? -1 : 1));
+  const k = dots.length || 1;
+  return { dots, days: out, maxDt, meanDt: sumDt / k, exactT, maxDx, meanDx: sumDx / k, exactX };
+}
+
+/* ---------- where a trip bracket is drawn on the scroll ----------
+ *
+ * A vertical hairline beside the trip's clusters, spanning their dates,
+ * ticks toward the dots, and the label set HORIZONTALLY beside it. The
+ * bracket goes to the right of the cluster — the paper there is the count
+ * not yet reached, and empty — unless the label would run off the sheet,
+ * or would sit on another day's dots; then it goes to the left. Labels
+ * cannot collide with each other here: trips are weeks apart in y and a
+ * label is 12 units tall.
+ */
+
+export const V_RUN_GAP = 12; /* cluster edge -> bracket */
+export const V_RUN_LABEL_GAP = 9; /* bracket -> label */
+export const V_RUN_MIN_H = 42; /* the pointer target, ≥ 24px at 0.536 */
+const V_RUN_CHAR_W = 8.3;
+
+export interface RunBracketV extends TravelRun {
+  y0: number; y1: number; mid: number;
+  bx: number;
+  side: 'left' | 'right';
+  labelX: number; labelY: number;
+  hx: number; hy: number; hw: number; hh: number;
+  label: string; dates: string; detail: string;
+}
+
+export function layoutRunsV(runs: TravelRun[], days: SwarmVDay[], dots: SwarmVDot[]): RunBracketV[] {
+  const seat = new Map(days.map((d) => [d.iso, d]));
+  const out: RunBracketV[] = [];
+  for (const run of runs) {
+    let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+    for (const iso of run.isos) {
+      const d = seat.get(iso);
+      if (!d) continue;
+      top = Math.min(top, d.top); bottom = Math.max(bottom, d.bottom);
+      left = Math.min(left, d.left); right = Math.max(right, d.right);
+    }
+    if (!isFinite(top)) continue;
+    const y0 = top - 6;
+    const y1 = bottom + 6;
+    const mid = (y0 + y1) / 2;
+    const label = `${run.region} · ${run.count}`.toUpperCase();
+    const lw = label.length * V_RUN_CHAR_W;
+    const isRun = new Set(run.isos);
+    const others = dots.filter((d) => !isRun.has(d.iso));
+    const collides = (x0: number, x1: number, ya: number, yb: number) =>
+      others.some((d) => d.x + V_DOT_R > x0 && d.x - V_DOT_R < x1 && d.y + V_DOT_R > ya && d.y - V_DOT_R < yb);
+
+    const rightBx = right + V_RUN_GAP;
+    const rightL0 = rightBx + V_RUN_LABEL_GAP;
+    const leftBx = left - V_RUN_GAP;
+    const leftL1 = leftBx - V_RUN_LABEL_GAP;
+    const fitsRight = rightL0 + lw <= VW - 6;
+    const fitsLeft = leftL1 - lw >= V_RULER_X + 8;
+    const clashRight = collides(rightBx - 6, rightL0 + lw, Math.min(y0, mid - 8), Math.max(y1, mid + 8));
+    const clashLeft = collides(leftL1 - lw, leftBx + 6, Math.min(y0, mid - 8), Math.max(y1, mid + 8));
+    let side: 'left' | 'right' = 'right';
+    if (!fitsRight || (clashRight && fitsLeft && !clashLeft)) side = 'left';
+    if (side === 'left' && !fitsLeft && fitsRight) side = 'right';
+
+    const bx = side === 'right' ? rightBx : leftBx;
+    const labelX = side === 'right' ? rightL0 : leftL1;
+    const lx0 = side === 'right' ? labelX : labelX - lw;
+    const lx1 = lx0 + lw;
+    const hx = Math.min(bx - 6, lx0);
+    const hw = Math.max(bx + 6, lx1) - hx;
+    const hy = Math.min(y0, mid - V_RUN_MIN_H / 2);
+    const hh = Math.max(y1, mid + V_RUN_MIN_H / 2) - hy;
+
+    const dates = run.from === run.to ? formatDate(run.from) : `${formatDate(run.from)} – ${formatDate(run.to)}`;
+    const what = run.count === 1 ? '1 new bird' : `${run.count} new birds`;
+    const howLong = run.dayCount === 1 ? 'one day' : `${run.dayCount} days`;
+    out.push({
+      ...run, y0, y1, mid, bx, side, labelX, labelY: mid, hx, hy, hw, hh, label, dates,
+      detail: `${howLong} · ${what} · ${andList(run.places)}`,
     });
   }
   return out;
