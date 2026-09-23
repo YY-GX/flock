@@ -202,7 +202,15 @@ const AIR_IN_PHONE = 7;
 const AIR_OUT_PHONE = 18;
 /** The compass sits bottom-left. Its reach from those two edges, halo included. */
 const COMPASS_X = 150;
-const COMPASS_Y = 134;
+const COMPASS_Y = 138;
+/* The browser's own link-target bubble, bottom-left, whenever the pointer is
+   over a link — which on this page is most of the time, since every bird is
+   one. Browser chrome: it cannot be moved or suppressed, so the layout keeps
+   clear of it. The number is `--status-bar` in global.css §1; it is repeated
+   here rather than read back out of CSS because this file runs before the
+   first paint of a morph and a getComputedStyle here would be a layout read
+   inside the frame loop. If one changes, change both. */
+const STATUS_BAR = 30;
 /* How far a hover carries the flock toward each formation.
  *
  * Where and When go all the way (DESIGN.md §1.2). A half-finished map is not
@@ -671,7 +679,20 @@ function setup(): void {
     } else {
       axisX0 = Math.max(pad, COMPASS_X + 16);
       axisX1 = W - pad;
-      axisY = H - 56;
+      /* The line, not the bottom of the chart: index.astro hangs 40px of
+         labels below it (ticks at +1, month names at +10..+22, the year at
+         +28..+40 — `.scaf__day` / `.scaf__mon` / `.scaf__year`). At H − 56
+         the year numerals ended 16px off the bottom edge, and the bottom
+         edge of a desktop window is where the browser paints its own
+         link-target bubble: point at anything on the page — a bird, one of
+         the four words, an arm of the compass — and "2024" is behind a chip
+         reading https://…/flock/timeline. It is browser chrome, so it
+         cannot be styled or suppressed; the axis moves instead.
+
+         40 of labels + STATUS_BAR + 8 of air. Keep this in step with
+         --status-bar in global.css §1, which reserves the same strip for
+         the compass and is the place the measurement is written down. */
+      axisY = H - (40 + STATUS_BAR + 8);
     }
 
     landCache.clear();

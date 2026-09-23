@@ -101,7 +101,10 @@ const south = at('list');
     /* geometry lives in global.css so every view can reserve the corner
        with --compass-safe; keep the two in step if you change it here */
     left: var(--compass-inset);
-    bottom: var(--compass-inset);
+    /* not --compass-inset: the corner is shared with the browser's own
+       link-target bubble, and the rose is the most-hovered thing on the
+       site. See --compass-lift in global.css §1. */
+    bottom: var(--compass-lift);
     /* below <BirdPanel /> (50) so the overlay covers it while modal */
     z-index: 45;
     display: grid;

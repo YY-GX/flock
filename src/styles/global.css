@@ -195,17 +195,45 @@
   --track-wide: 0.2em;  /* eyebrows */
   --track-label: 0.12em;/* dt labels */
 
+  /* The browser's own link-target bubble: the little chip that says
+     "https://…/flock/timeline" in the BOTTOM-LEFT corner whenever the
+     pointer is over a link. It is browser chrome — it is painted over the
+     page, we are not told when, and no CSS or script can move or suppress
+     it. So it is a fact about the corner, and the only answer is to keep a
+     strip of paper free for it.
+
+     30px. Measured in Chrome at 100% zoom the chip is 23-24px tall; Safari
+     and Firefox draw about the same; 30 leaves air and absorbs a click or
+     two of zoom before anything is actually covered. It is wide, too —
+     as wide as the URL, up to about half the window — so the whole strip
+     is spoken for, not just the first hundred pixels.
+
+     And it exists ONLY where a pointer can hover. On a phone nothing ever
+     shows it, and reserving 30px of a 740px screen there would be paying a
+     tax to a browser that is not charging one — hence the `hover: hover`
+     query below rather than a flat value. */
+  --status-bar: 0px;
+
   /* the compass, bottom-left, is fixed and sits over every view.
      These describe its real footprint so layouts can stay off it:
      inset from the corner + the rose itself + its paper halo. */
   --compass-inset: clamp(10px, 2.2vw, 26px);
   --compass-size: 90px;               /* 78px below 760px, see §2 */
   --compass-halo: 18px;
+  /* Where the rose actually sits: its own inset, floored at the status
+     strip. The rose is the most-hovered thing on the site and it is in the
+     corner the bubble claims, so pointing at the "life list" arm used to
+     pop the chip underneath the arm you were pointing at. Below ~1180px
+     wide the inset falls under 26px and the glyph was covered outright.
+
+     At 1440 this is a 4px lift and nothing else moves. The halo still goes
+     under the chip, which is correct — the halo is paper, not a mark. */
+  --compass-lift: max(var(--compass-inset), var(--status-bar));
   /* How far the compass reaches in from the bottom-left corner — the same
      on both axes, since the rose is square: use it as a bottom inset, or as
      a left inset for anything pinned low (a sticky column's footer, say).
-     ~146px: the rose, its halo, and 12px of air so type never grazes it. */
-  --compass-safe: calc(var(--compass-inset) + var(--compass-size) + var(--compass-halo) + 12px);
+     ~150px: the rose, its halo, and 12px of air so type never grazes it. */
+  --compass-safe: calc(var(--compass-lift) + var(--compass-size) + var(--compass-halo) + 12px);
 
   /* spacing */
   --gutter: clamp(20px, 6vw, 88px);   /* left/right page margin, all views */
@@ -308,6 +336,14 @@
 /* the compass shrinks on a phone (see Compass.astro), so its safe area does */
 @media (max-width: 760px) {
   :root { --compass-size: 78px; }
+}
+
+/* Only a pointer can raise the browser's link-target bubble, so only a
+   pointer pays for it. A touch screen keeps the corner it has. `hover: hover`
+   and not `min-width`: a small laptop window has the bubble and a large
+   tablet does not, and the question is the input device, not the paper. */
+@media (hover: hover) {
+  :root { --status-bar: 30px; }
 }
 
 /* ---------------- 2b. the season you are standing in ----------------
