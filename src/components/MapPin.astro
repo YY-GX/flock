@@ -13,7 +13,7 @@
  */
 import BirdThumb from './BirdThumb.astro';
 import { placeTransitionName, splitName } from '../lib/flock';
-import type { PlaceView } from '../lib/mapView';
+import { FAN_RING, type PlaceView } from '../lib/mapView';
 import { withBase } from '../lib/paths';
 
 interface Props {
@@ -80,8 +80,27 @@ const dodged = place.dodge > 0.35;
  * never fetches them for a map nobody touches (~5 more per pin).
  *
  * They are decoration: aria-hidden, no view-transition name, no panel.
+ *
+ * Enlarge the map and the same deck does the other half of its job: it comes
+ * out of the disc and stands round it, one bird at a time, as the zoom opens
+ * room (mapView's `fanPlan`, driven by `mapZoom.ts`). The two readings never
+ * run together — a card that is out is not in the flip-book — so the deck is
+ * either a stack you turn over or a rosette you look at, never both.
  */
 const deck = place.isHome ? [] : place.deck;
+
+/*
+ * Where each fanned bird stands, precomputed as the two components of its
+ * direction times the ring radius, in shares of the pin's own width. The
+ * rosette is self-similar to the pin, so this is a constant per card and CSS
+ * needs no arithmetic at run time.
+ */
+const fan = place.fanAngles.map((a) => ({
+  x: (FAN_RING * Math.cos(a)).toFixed(4),
+  y: (FAN_RING * Math.sin(a)).toFixed(4),
+}));
+/* the zoom each satellite earns its place at; mapZoom reads it off the DOM */
+const fanAt = place.fanAt.join(' ');
 ---
 
 <Tag
@@ -98,6 +117,7 @@ const deck = place.isHome ? [] : place.deck;
   data-place={place.slug}
   data-count={place.count}
   data-deck={deck.length || undefined}
+  data-fan={fanAt || undefined}
   aria-label={href ? label : undefined}
   {/* `is-active` means two different things now: on a place page it is the
       page you are on (no href), and on a day page it is one of the two or
@@ -127,25 +147,38 @@ const deck = place.isHome ? [] : place.deck;
     ) : (
       <span class="map-pin__n">{place.count}</span>
     )}
-
-    {deck.length > 0 && (
-      <span class="map-pin__deck" aria-hidden="true">
-        {deck.map((bird, i) => (
-          <span class="map-pin__card" style={`--k:${i}`} data-name={splitName(bird.name).english}>
-            <BirdThumb
-              bird={bird}
-              size={place.diameter}
-              shape="circle"
-              name={false}
-              opens={false}
-              transition={false}
-              style="--thumb:100%"
-            />
-          </span>
-        ))}
-      </span>
-    )}
   </span>
+
+  {/*
+    A sibling of the disc, laid exactly over it, rather than a child of it.
+    The disc clips to its own circle — that is what makes the face round — and
+    a bird fanned out to nine tenths of a pin's width would be cut in half by
+    that clip. Overlaying instead costs nothing: the stack sits precisely
+    where it always did (same box, each card round in its own right), and the
+    rosette has the whole sheet to stand on. It never takes the pointer, so
+    the pin's hit area is exactly what TODO C3 measured.
+  */}
+  {deck.length > 0 && (
+    <span class="map-pin__deck" aria-hidden="true">
+      {deck.map((bird, i) => (
+        <span
+          class="map-pin__card"
+          style={`--k:${i}${fan[i] ? `;--fx:${fan[i].x};--fy:${fan[i].y}` : ''}`}
+          data-name={splitName(bird.name).english}
+        >
+          <BirdThumb
+            bird={bird}
+            size={place.diameter}
+            shape="circle"
+            name={false}
+            opens={false}
+            transition={false}
+            style="--thumb:100%"
+          />
+        </span>
+      ))}
+    </span>
+  )}
 
   <svg class="map-pin__tail" viewBox="0 0 12 14" aria-hidden="true">
     <path d="M6 14 L1 1.6 Q6 3.6 11 1.6 Z" />
@@ -165,11 +198,26 @@ const deck = place.isHome ? [] : place.deck;
     position: absolute;
     left: calc(var(--x) * 1%);
     top: calc(var(--y) * 1%);
-    /* the tail tip, not the middle of the disc, sits on the spot */
-    transform: translate(-50%, -100%);
+    /*
+     * The tail tip, not the middle of the disc, sits on the spot — and that
+     * tip is also what the pin is scaled about when the map is enlarged, so
+     * the pin can shrink against the artwork without ever sliding off its own
+     * coordinate.
+     *
+     * `--pin-k` is `z ** -0.65` (mapZoom.ts sets it; the exponent is argued
+     * over PIN_ZOOM_EXP in mapView.ts), which against the sheet's own `z`
+     * leaves the photograph growing as `z ** 0.35`. **Scaling the whole pin
+     * rather than only its width is the point**: the paper ring, the tail's
+     * 7 px floor, the label and — the part that matters — the invisible
+     * 24 px hit pad are all laid out at the resting size and then multiplied
+     * together, so every internal proportion TODO C3 measured survives
+     * untouched and the target can only ever get bigger.
+     */
+    transform: translate(-50%, -100%) scale(var(--pin-k, 1));
+    transform-origin: 50% 100%;
     /* sized against the map, never in raw pixels: the pins and the coastline
        then shrink together and the dodge in mapView.ts holds at every width */
-    width: calc(var(--dp) * 1% * var(--pin-k, 1));
+    width: calc(var(--dp) * 1%);
     z-index: calc(100 - var(--z));
     color: inherit;
     text-decoration: none;
@@ -235,27 +283,80 @@ const deck = place.isHome ? [] : place.deck;
   /* --- the flip-book -------------------------------------------------- */
 
   /*
-   * Kept out of the layout until the pin is first hovered: Chrome does not
-   * fetch a lazy image that has no box, so a map nobody touches costs
-   * nothing, and the 500ms dwell before the first turn covers the fetch.
+   * Kept out of the layout until something asks for it: Chrome does not fetch
+   * a lazy image that has no box, so a map nobody touches costs nothing, and
+   * the 500ms dwell before the first turn covers the fetch. Two things ask —
+   * a dwell (`is-armed`, the flip-book) and enlarging the map (`is-fanned`,
+   * the rosette) — and both are a deliberate gesture by the reader. Nothing
+   * asks at rest, which is the whole of TODO A3's 静止零加载.
+   *
+   * The box is laid over the disc rather than inside it; see the note in the
+   * markup for why.
    */
   .map-pin__deck {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    aspect-ratio: 1;
+    /* decoration over a link: the disc underneath keeps every click */
+    pointer-events: none;
+  }
+  .map-pin.is-armed .map-pin__deck,
+  .map-pin.is-fanned .map-pin__deck { display: block; }
+
+  .map-pin__card {
+    /* the card, not just the deck, decides whether it has a box: arming still
+       gives all five one (as it always did, so the flip-book is unchanged),
+       but the rosette can give one to exactly the birds that are out */
     display: none;
     position: absolute;
     inset: 0;
     border-radius: 50%;
     overflow: hidden;
-  }
-  .map-pin.is-armed .map-pin__deck { display: block; }
-
-  .map-pin__card {
-    position: absolute;
-    inset: 0;
     opacity: 0;
     transition: opacity 260ms var(--ease);
   }
+  .map-pin.is-armed .map-pin__card,
+  .map-pin__card.is-out { display: block; }
   .map-pin__card.is-on { opacity: 1; }
   .map-pin__card :global(.thumb) { width: 100%; }
+
+  /* --- the rosette ---------------------------------------------------- */
+
+  /*
+   * A bird standing on the paper beside its place. `--fx` / `--fy` are its
+   * direction times the ring radius, in shares of the pin's own width, so the
+   * whole rosette is self-similar to the pin and shrinks with it — the ring
+   * closes in as the zoom rises and the birds stay a constellation rather
+   * than drifting apart. `mapView.ts` chose each direction by measuring
+   * against every neighbour, every other rosette and the Triangle marker.
+   *
+   * It wears the pin's own paper ring, because it is the same kind of object:
+   * a print laid on the map. It is not a link and not in the accessibility
+   * tree — the place it belongs to is both, and all of its birds are on the
+   * page that pin leads to.
+   */
+  .map-pin__card.is-out {
+    opacity: 0.94;
+    transform: translate(calc(var(--fx, 0) * 100%), calc(var(--fy, 0) * 100%)) scale(0.62);
+    /*
+     * Half the pin's mount — one hairline of paper and one of rule, against
+     * the pin's 2 and 3 — and a shade off full strength. Size alone cannot
+     * say which disc is a place any more: at 4x the smallest pin is 48.7 px
+     * and the largest pin's satellites are 68.5 px, so a big place's extra
+     * birds are bigger than a small place's pin. What still separates them is
+     * that a pin is mounted heavier and stands on a tail pointing at its
+     * coordinate, and a satellite has neither.
+     */
+    box-shadow: 0 0 0 1px var(--paper), 0 0 0 2px var(--rule-soft);
+    transition: opacity 200ms var(--ease);
+  }
+  /* a state, not a move: nothing slides into place */
+  @media (prefers-reduced-motion: reduce) {
+    .map-pin__card.is-out { transition: none; }
+  }
 
   /* the face fades under whichever card is showing, and back on leave */
   .map-pin__disc > :global(.map-pin__thumb),

@@ -120,12 +120,16 @@ const triBar = scaleBar('triangle');
     <p class="map-hint meta">
       <span class="map-hint__fine">
         Hover a pin to meet the other birds it is standing on. Click one to open the
-        place, or the boxed Triangle to go in.
+        place, or the boxed Triangle to go in. Double-click the map — or hold ⌘ and
+        scroll, or press <kbd>+</kbd> — to come closer: the sheet grows, the
+        photographs barely do, and as each place gets room it puts out more of its
+        birds. Drag to move, <kbd>0</kbd> to come back.
       </span>
       <span class="map-hint__coarse">
-        At this size the map is a drawing — the photographs are 10 to 27 px across.
-        Tap one if you can; every place is also a line below, and the boxed Triangle
-        still goes in.
+        At this size the map is a drawing — the photographs are 10 to 27 px across,
+        and it does not enlarge here: a pinch on a sheet this size fights the page
+        you are scrolling. Tap a pin if you can; every place is also a line below,
+        and the boxed Triangle still goes in.
       </span>
     </p>
 
@@ -563,6 +567,15 @@ const triBar = scaleBar('triangle');
   @media (max-width: 860px) {
     .map-hint__fine { display: none; }
     .map-hint__coarse { display: inline; }
+  }
+
+  /* a key cap, in the site's own hand: no box, just the small caps the rest
+     of the furniture labels are set in */
+  .map-hint :global(kbd) {
+    font-family: var(--sans);
+    font-size: 0.86em;
+    letter-spacing: 0.06em;
+    color: var(--ink);
   }
 
   .map-hint {

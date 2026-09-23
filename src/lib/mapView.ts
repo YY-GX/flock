@@ -135,7 +135,21 @@ function deckOrder(a: Bird, b: Bird): number {
   return a.name.localeCompare(b.name);
 }
 
-/** How many more birds a pin carries behind its face. */
+/**
+ * How many more birds a pin carries behind its face — the flip-book on dwell,
+ * and since the map zooms, the rosette that fans out around it.
+ *
+ * ⚠️ 5 IS NOT A BUDGET, IT IS WHERE THE SHEET RUNS OUT. Raising it looks like
+ * the obvious way to answer "看那一部分更多的鸟", so it was tried: at 12 the
+ * whole map yields 85 satellites at its 6x ceiling against 81 at 5, four more
+ * birds for 294 deck cards instead of 155 and 7 KB more gzipped HTML on every
+ * load. `fanPlan()` refuses the rest because they collide — the binding
+ * constraint is room on the paper, not the cap.
+ *
+ * So if more birds per place is ever wanted, this is the wrong number to
+ * change. The sheet has to give: a bigger fan radius, smaller satellites, or
+ * a level of magnification that shows one region instead of the country.
+ */
 const DECK_MAX = 5;
 
 /** 1 species -> 30px, 50 species -> 68px. sqrt so small places stay legible. */
@@ -189,6 +203,14 @@ export interface PlaceView {
   pinBird: Bird | null;
   /** up to five more birds the pin flips through on hover, face excluded */
   deck: Bird[];
+  /**
+   * Where this pin's fanned-out deck birds stand, in radians round the disc
+   * centre, and the zoom each one earns its place at. `fanAngles[k]` and
+   * `fanAt[k]` describe `deck[k]`; both are shorter than `deck` when the
+   * neighbours never leave room. Filled in by `fanPlan()`.
+   */
+  fanAngles: number[];
+  fanAt: number[];
   diameter: number;
   isHome: boolean;
   firstDate: string | null;
@@ -224,6 +246,9 @@ function build(loc: LocationRec): PlaceView {
     /* filled in by assignFaces() below, once every place is known */
     pinBird: null,
     deck: [],
+    /* filled in by fanPlan(), once the dodge for this space has settled */
+    fanAngles: [],
+    fanAt: [],
     diameter: pinDiameter(list.length || loc.birdCount || 1),
     isHome: loc.slug === HOME_SLUG,
     firstDate: dated[0]?.firstSpotted ?? null,
@@ -600,6 +625,213 @@ function clearances(space: SpaceId): void {
   }
 }
 
+/* ---------------- zoom, and the room it opens up ---------------- */
+
+/*
+ * The map can be enlarged (see src/lib/mapZoom.ts). Two numbers here are the
+ * whole of what the rest of the site has to agree on.
+ *
+ * **The pin does not grow with the map.** If it did, zooming would magnify
+ * the north-east blob exactly as it is and reveal nothing: measured at 1440,
+ * the tightest gap in the north-east is 4.84 px between discs 39-61 px
+ * across, and at 1:1 scaling that ratio is *constant* at every zoom (4.84 px
+ * per 39 px disc at 1x, 19.4 per 156 at 4x — 0.124 either way). So the pin
+ * scales as `z ** PIN_ZOOM_EXP` while the artwork scales as `z`, and the air
+ * between two pins, measured in pin diameters, grows.
+ *
+ * 0.35 rather than something lower or higher, from the two measurements that
+ * pull against each other in the north-east cluster (the eight pins east of
+ * 85% and north of 36%):
+ *
+ *   exponent   air reaches one full pin diameter at   smallest NE disc at 4x
+ *      0.25                z = 2.1                        55.2 px (1.70% of the sheet)
+ *      0.35                z = 2.4                        63.4 px (1.95%)
+ *      0.45                z = 2.8                        72.8 px (2.24%)
+ *      1.00                never — 0.124 at every z       156 px  (4.81%)
+ *
+ * Lower relieves the crowding sooner and leaves the photographs looking like
+ * confetti on a big sheet; higher keeps them chunky and takes until 3x to
+ * open a gap. 0.35 is the middle, and it is the one place on this map where
+ * "pick by taste" would have been wrong — the 1.00 row is the proof that the
+ * obvious implementation reveals literally nothing.
+ *
+ * The ceiling is not taste either. `BirdThumb` builds every plate at exactly
+ * twice its CSS box (`BirdThumb.astro`: `const edge = Math.round(size * 2)`),
+ * so a pin is upscaled past the pixels we actually shipped the moment
+ * `z ** PIN_ZOOM_EXP` passes 2 — that is z = 2 ** (1 / 0.35) = 7.25. Six
+ * stays under it with room to spare, and by 5 the fan below has nothing left
+ * to show anyway. It is the same rule the photo viewer states as "the most
+ * you can ever ask for is the file at 1:1" (src/lib/plateViewer.ts).
+ */
+export const PIN_ZOOM_EXP = 0.35;
+export const MAP_ZOOM_MAX = 6;
+
+/** The pin's own scale at zoom `z`: `z ** 0.35` on screen, against the map's `z`. */
+export function pinScaleAt(z: number): number {
+  return Math.pow(Math.max(1, z), PIN_ZOOM_EXP - 1);
+}
+
+/*
+ * The fan (the owner's "放大之后可以看那一部分更多的鸟").
+ *
+ * A pin already carries a deck of up to five more birds from its place; at
+ * rest they are stacked inside the disc and `display: none`, and dwelling
+ * flips through them. Once the map is enlarged the pin has room *around* it,
+ * so the deck comes out and stands on the paper as a little rosette.
+ *
+ * `FAN_RING` is the ring radius in the pin's own widths, so the rosette is
+ * self-similar and CSS can place it with one constant — the pin scales, the
+ * fan scales with it. The satellites are 0.62 of the pin's diameter: big
+ * enough to still be a photograph (the smallest pin is 30 px at the
+ * reference width, so its satellite is 18.6 px at 1x and 30.4 px at 4x),
+ * small enough to read as "and these too" rather than as more places.
+ *
+ * `FAN_MARGIN` is *not* proportional. It is `DODGE_GAP` — the same 0.6% of
+ * the sheet's width the relaxation leaves between any two discs. A satellite
+ * is a disc on this map and keeps the same clear air as every other one.
+ */
+const FAN_SIZE = 0.62;
+const FAN_GAP = 0.18;
+export const FAN_RING = (1 + FAN_SIZE + FAN_GAP) / 2; /* 0.90 pin widths */
+export const FAN_SIZE_PCT = FAN_SIZE;
+const FAN_MARGIN = DODGE_GAP;
+
+/*
+ * Nothing fans at 1x, and this is a decision rather than a measurement — the
+ * geometry would in fact allow 17 of the 19 US pins one satellite each at
+ * rest. Two reasons it must not:
+ *
+ *   - **Zero load at rest.** The deck is `display: none` until something asks
+ *     for it, which is why a map nobody touches fetches none of its 154
+ *     cards (TODO A3, "静止零加载"). A satellite showing at 1x is an image
+ *     request on page load, and that property is gone.
+ *   - At 1x the map is the drawing the reader already knows. The fan is what
+ *     the gesture buys; it should not be there before the gesture.
+ */
+const FAN_FLOOR = 1.35;
+
+/*
+ * And a satellite has to be worth showing. Below about 26 px a circular crop
+ * of a bird is a smudge, not a photograph, so a satellite waits until the
+ * zoom has carried it there. Measured against `REF_MAP_W`, the same
+ * reference width the pin diameters themselves are drawn for, so one number
+ * holds for both sheets; `mapZoom.ts` re-checks it against the width the map
+ * is *actually* drawn at, which is what makes a 476 px place-page map ask
+ * for more zoom than a 811 px one.
+ */
+export const FAN_MIN_PX = 26;
+
+/** Candidate directions for a satellite, every 6 degrees. */
+const FAN_ANGLES = Array.from({ length: 60 }, (_, i) => (i * 6 * Math.PI) / 180);
+/** The ladder the schedule is solved on. */
+const FAN_STEP = 0.05;
+
+/*
+ * Solve the schedule: for each place, which directions its satellites stand
+ * in and the zoom at which each one earns its place.
+ *
+ * Swept from `FAN_FLOOR` upwards, and a satellite once placed is kept. That
+ * is not just for stability — it is what makes the answer sound. Everything
+ * on this sheet shrinks toward its own pin's centre as the zoom rises (the
+ * pin as `z ** 0.35 / z`, the ring with it) while the centres themselves are
+ * fixed percentages, so the distance between any two discs on the map only
+ * ever grows and the clearance a satellite needs only ever shrinks. A
+ * placement that is legal at z is legal at every zoom above it, and there is
+ * no need to re-check it.
+ *
+ * Places take their turn biggest first — the same order `placesIn` draws
+ * them in — so the order is deterministic and a rebuild cannot reshuffle the
+ * map.
+ */
+function fanPlan(space: SpaceId): void {
+  const def = SPACES[space];
+  const ratio = def.height / def.width;
+  const vh = 100 * ratio;
+  const list = places.filter((p) => p.space === space);
+  const obs = dodgeObstacles(space);
+  const order = [...list].sort((a, b) => b.span - a.span || a.slug.localeCompare(b.slug));
+
+  for (const p of list) {
+    p.fanAngles = [];
+    p.fanAt = [];
+  }
+
+  /* The disc centre at zoom `z`, in the dodge's own (u, v) percent space. */
+  /*
+   * The pin keeps its layout box and is *scaled* about its tail tip (see
+   * `.map-pin` in MapPin.astro), so at zoom `z` both the disc radius and the
+   * height it floats above the coordinate are the resting values times `k`.
+   *
+   * `REF_MAP_W` rather than a sweep of widths, unlike `clearances()`. The
+   * tail's 7 px floor is the reason that function has to sweep, and here it
+   * cannot move the answer far enough to matter: over the widths at which a
+   * satellite is ever big enough to appear at all (about 600 px up — below
+   * that no pin reaches `FAN_MIN_PX` even at `MAP_ZOOM_MAX`), the lift for
+   * the smallest pin runs 2.73-2.88% and for the largest 6.42-6.58%. The
+   * widest spread is 0.24% of the sheet, inside the 0.6% of clear air
+   * `FAN_MARGIN` holds back anyway.
+   */
+  const at = (p: PlaceView, k: number) => ({
+    u: p.x,
+    v: p.y * ratio - liftPct(p.span, REF_MAP_W) * k,
+    r: (p.span / 2) * k,
+  });
+
+  for (let z = FAN_FLOOR; z <= MAP_ZOOM_MAX + 1e-9; z += FAN_STEP) {
+    const k = pinScaleAt(z);
+    const discs = list.map((p) => ({ p, ...at(p, k) }));
+    const byPlace = new Map(discs.map((d) => [d.p, d]));
+    /* every satellite standing on the sheet at this zoom */
+    const sats: { u: number; v: number; r: number }[] = [];
+    for (const d of discs) {
+      const ring = d.r * 2 * FAN_RING;
+      for (const a of d.p.fanAngles) {
+        sats.push({ u: d.u + ring * Math.cos(a), v: d.v + ring * Math.sin(a), r: d.r * FAN_SIZE });
+      }
+    }
+
+    for (const p of order) {
+      const room = Math.min(DECK_MAX, p.deck.length);
+      if (p.fanAngles.length >= room) continue;
+      /* a satellite that would not be a photograph has not been earned yet */
+      if (p.span * k * FAN_SIZE * (REF_MAP_W / 100) * z < FAN_MIN_PX) continue;
+
+      const me = byPlace.get(p)!;
+      const ring = me.r * 2 * FAN_RING;
+      const rs = me.r * FAN_SIZE;
+
+      let best: number | null = null;
+      let bestSlack = -1;
+      for (const a of FAN_ANGLES) {
+        const cu = me.u + ring * Math.cos(a);
+        const cv = me.v + ring * Math.sin(a);
+        let slack = Math.min(cu - rs, 100 - cu - rs, cv - rs, vh - cv - rs);
+        for (const d of discs) {
+          if (d.p === p) continue;
+          slack = Math.min(slack, Math.hypot(cu - d.u, cv - d.v) - rs - d.r - FAN_MARGIN);
+        }
+        for (const s of sats) {
+          slack = Math.min(slack, Math.hypot(cu - s.u, cv - s.v) - rs - s.r - FAN_MARGIN);
+        }
+        for (const o of obs) {
+          const [ou, ov, or_] =
+            'rect' in o ? [...nearestOnRect(o.rect, cu, cv), 0] : [o.u, o.v, o.r];
+          slack = Math.min(slack, Math.hypot(ou - cu, ov - cv) - rs - or_ - FAN_MARGIN);
+        }
+        if (slack >= 0 && slack > bestSlack) {
+          bestSlack = slack;
+          best = a;
+        }
+      }
+
+      if (best === null) continue;
+      p.fanAngles.push(best);
+      p.fanAt.push(Math.round(z * 100) / 100);
+      sats.push({ u: me.u + ring * Math.cos(best), v: me.v + ring * Math.sin(best), r: rs });
+    }
+  }
+}
+
 const dodged = new Set<SpaceId>();
 
 /**
@@ -611,6 +843,7 @@ export function placesIn(space: SpaceId): PlaceView[] {
     dodged.add(space);
     dodgeSpace(space);
     clearances(space);
+    fanPlan(space);
   }
   return places.filter((p) => p.space === space).sort((a, b) => b.diameter - a.diameter);
 }
