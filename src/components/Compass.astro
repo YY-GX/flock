@@ -148,7 +148,25 @@ const south = at('list');
      something behind something (AUDIT2 §5.1). A name is now either there or
      it is not. The fade that is left is 18px of paper going to nothing,
      which is what keeps this a corner of the page rather than a card on
-     top of it. */
+     top of it.
+
+     ⚠️ But it is only drawn WHILE YOU ARE POINTING AT THE ROSE.
+
+     The rose is a cross — n, w, c, e, s — and the four corners of its 3x3
+     grid hold nothing at all. A disc covering the whole square therefore
+     spent most of its area hiding the page on behalf of glyphs that are not
+     there: a 126px circle for five marks that occupy a 90px plus-sign. On a
+     bird page that corner is a contact-sheet thumbnail, and the owner's
+     screenshot is of a photograph with a bite taken out of it by paper
+     backing nothing. "左下角的轮盘在鼠标没有hover上去的时候不应该遮挡缩略图."
+
+     So the two jobs are separated. At rest each glyph carries its own small
+     disc (below) and the page shows through everywhere else. Point at the
+     rose — which is also when the labels come out and the whole thing has
+     to be read as one object — and this grows back to the full halo. The
+     covering is still absolute where it happens; there is still no state in
+     which type comes out half-legible. It just no longer happens across
+     3,600 square pixels of photograph you were looking at. */
   .compass::before {
     content: "";
     position: absolute;
@@ -166,7 +184,63 @@ const south = at('list');
     -webkit-mask-image: radial-gradient(closest-side, #000 86%, transparent 100%);
     mask-image: radial-gradient(closest-side, #000 86%, transparent 100%);
     pointer-events: none;
+    opacity: 0;
+    /* out quickly, in at the speed the glyphs ink up, so the halo arrives
+       with the rose rather than chasing it */
+    transition: opacity 240ms ease;
   }
+  .compass:hover::before,
+  .compass:focus-within::before { opacity: 1; }
+
+  /* The resting backing: five small discs, one under each glyph, and clear
+     page everywhere else. Against a 90px square the cross of marks is about
+     a third of the area, so this is the same covering doing a third of the
+     damage — and the corner that was eating the owner's thumbnail holds
+     nothing at all now.
+
+     Drawn on the NAV, not on the five links. The links are unpositioned on
+     purpose: .compass__label is absolute against the nav, so `left: 100%`
+     means "past the whole rose" and giving a point `position: relative`
+     would silently reel every label back to 30px and run "WHERE" across the
+     hub again. Five gradients on one box, and nobody's coordinates move.
+
+     The grid is 3x3 and equal, so the glyph centres are at 1/6, 1/2 and 5/6
+     of the nav on each axis whatever --compass-size is — the phone's 78px
+     needs no second set of numbers. The same five shapes are the mask, so
+     the blur is clipped to the discs too and does not frost the corners it
+     is no longer covering. */
+  .compass::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background:
+      radial-gradient(circle 15px at 50% 16.667%, var(--paper) 64%, transparent 100%),
+      radial-gradient(circle 15px at 16.667% 50%, var(--paper) 64%, transparent 100%),
+      radial-gradient(circle 15px at 50% 50%, var(--paper) 64%, transparent 100%),
+      radial-gradient(circle 15px at 83.333% 50%, var(--paper) 64%, transparent 100%),
+      radial-gradient(circle 15px at 50% 83.333%, var(--paper) 64%, transparent 100%);
+    -webkit-backdrop-filter: blur(5px);
+    backdrop-filter: blur(5px);
+    -webkit-mask-image:
+      radial-gradient(circle 15px at 50% 16.667%, #000 72%, transparent 100%),
+      radial-gradient(circle 15px at 16.667% 50%, #000 72%, transparent 100%),
+      radial-gradient(circle 15px at 50% 50%, #000 72%, transparent 100%),
+      radial-gradient(circle 15px at 83.333% 50%, #000 72%, transparent 100%),
+      radial-gradient(circle 15px at 50% 83.333%, #000 72%, transparent 100%);
+    mask-image:
+      radial-gradient(circle 15px at 50% 16.667%, #000 72%, transparent 100%),
+      radial-gradient(circle 15px at 16.667% 50%, #000 72%, transparent 100%),
+      radial-gradient(circle 15px at 50% 50%, #000 72%, transparent 100%),
+      radial-gradient(circle 15px at 83.333% 50%, #000 72%, transparent 100%),
+      radial-gradient(circle 15px at 50% 83.333%, #000 72%, transparent 100%);
+    pointer-events: none;
+    /* fades out exactly as the full halo fades in, so the two never stack
+       and the paper never doubles anywhere */
+    transition: opacity 240ms ease;
+  }
+  .compass:hover::after,
+  .compass:focus-within::after { opacity: 0; }
 
   .compass:hover,
   .compass:focus-within { --rose-ink: 1; }
@@ -266,6 +340,21 @@ const south = at('list');
     .compass__hub,
     .compass__pt,
     .compass__label { transition: none; }
+    /* the halo still swaps, it just swaps instantly — this is a covering,
+       not an animation, and the glyphs have to stay legible either way */
+    .compass::before,
+    .compass::after { transition: none; }
+  }
+
+  /* No hover, no pointing, so the big halo is never wanted: a touch screen
+     keeps the five discs for good. `:focus-within` is the reason this has to
+     be said out loud — tapping an arm focuses it, which would otherwise
+     trade the discs for a halo nobody asked for and leave the rose backed by
+     nothing for 240ms on the way. The /places index scrolls 37 full-bleed
+     rows under this corner; it is never unbacked. */
+  @media (hover: none) {
+    .compass::before { display: none; }
+    .compass:focus-within::after { opacity: 1; }
   }
 
   @media print { .compass { display: none; } }

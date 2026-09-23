@@ -61,7 +61,27 @@ Business plan）。2026-09-18 用掉了仅有的额度，之后连最简单的 S
 
 - 签名**每次 fetch 都轮换**（`X-Amz-Credential` 变，同页不同图 `X-Amz-Date`
   甚至差 1 秒），所以每个 URL 必须配自己的签名，不能共用
-- 一个页面最多有 13 张图，串行下载大图会撞上 5 分钟窗口——**同页内并行下载**
+- 一个页面最多有 **29** 张图（Great Blue Heron），串行下载大图会撞上 5 分钟
+  窗口——**同页内并行下载**
+- **`X-Amz-Signature` 不是 query string 的最后一个参数**，后面还有
+  `X-Amz-SignedHeaders` 和 `X-Amz-Expires`。用正则抠 URL 时抠到签名就停，
+  下载会拿回一个 436 字节的
+  `AuthorizationQueryParametersError`，看起来和「链接过期了」一模一样。
+  正则要一直吃到空白或引号为止
+
+### ⚠️ notion-fetch 报「超出结果上限」不等于抓不到
+
+Great Blue Heron 的照片页有 29 张图，`notion-fetch` 的返回体积超限直接报错。
+**但 harness 在报错之前已经把完整返回写进了文件**，路径就印在错误信息里，
+签名 URL 全都在里面。所以流程是：
+
+1. `notion-fetch`（会报错，无所谓）
+2. 立刻从它写下的那个文件里正则抠出所有 `https://prod-files-secure.s3...`
+3. 立刻并行下载——**5 分钟的表这时候已经在走了**
+
+`scripts/`（或 scratchpad 里的 `gbh-grab.py`）就是干这个的。这个页面
+**不需要在 Notion 里拆成两页**；之前 TODO 里说要拆是因为把「工具返回太大」
+当成了「数据拿不到」。
 - 下载中途的文件看起来像损坏（1.3KB），**别急着判定失败**，等它下完再验
 - 多 agent 并行时**每个 agent 必须用独立的 scratch 子目录**，否则
   helper 脚本会互相覆盖（这次就被坑了一次）

@@ -50,8 +50,14 @@ B 组（美工十一条）、C 组（非美工八条）以及 `DESIGN2.md` 的 I
   Pied-billed Grebe —— 每组一张有观测记录、一张有全部资料，两页都半空
 - **Fish Crow** spotted 但无照片
 - **Northern Rough-winged Swallow** 标了未 spotted 却有日期/类型/地点
-- **Great Blue Heron** 照片页图太多，`notion-fetch` 超出结果上限
-  （claude-sync 软链接导致溢出路径被拒）。拆成两页即可
+- ~~**Great Blue Heron** 照片页图太多，拆成两页~~ —— **不用拆，已解决**。
+  29 张图已全部抓下来（`photos.json` 从 1,278 → **1,307** 张）。原因见
+  CLAUDE.md：工具返回超限 ≠ 数据拿不到，完整返回在报错前就落盘了
+- **Great Blue Heron 的 `Camera` 填的是 "iphone 15 Pro Max"，但对不上**：
+  29 张里 EXIF 读出来 5 张是富士（7728×5152，X-T5）、2 张是 iPhone、
+  其余 22 张是没有相机信息的截图/裁切。`Camera` 是每页一个值，这页混了机器，
+  所以 `/list` 版本记里 iPhone 那一栏现在多算了至少 5 张。
+  要么在 Notion 里拆页，要么改成按文件读 EXIF——**没有替你猜**
 - **`focal.json`** 可能有几条算错，翻到明显不对的手动改并设 `"by": "hand"`
 
 ---
