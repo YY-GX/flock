@@ -34,6 +34,13 @@ env:
   # The same value is in .env for local builds (see .env.example).
   PUBLIC_ORIGINALS_BASE: https://pub-6cf8120c2be142589cd5b84483c3bb6e.r2.dev
 
+  # The GA4 measurement ID. A measurement ID is public by design — it ships in
+  # the page either way, in the HTML of all 397 of them, so a repository secret
+  # would hide it from nobody and would only break pull-request builds. Unset
+  # it and the site emits no tag at all, which is what a local `npm run dev`
+  # is; src/lib/analytics.ts is the one place this is written down.
+  PUBLIC_GA_ID: G-DMKKDJ3JNM
+
 jobs:
   build:
     runs-on: ubuntu-latest

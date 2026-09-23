@@ -9,14 +9,17 @@
  * Birds cannot draw the United States; paper can. So each hover is three
  * layers, not one (DESIGN.md §1): the flock completes the formation, a ghost
  * of the destination view's *own* scaffold fades in behind it — the real
- * `us.svg` coastline, a hairline time axis with its months and years, the
- * nine group names — and one italic line says what the arrangement means.
- * Without the scaffold, "Where" is 58 circles in a shape; with it, it is a
- * map with a big clump over North Carolina, which is the truth.
+ * `us.svg` coastline with the Triangle's ring and inset box, a hairline axis
+ * with one slot per day out, the nine group names — and one italic line says
+ * what the arrangement means. Without the scaffold, "Where" is 58 circles in
+ * a shape; with it, it is a map, with the home birds "enlarged here" in the
+ * same dashed box /places uses, because thirty-four photographs do not fit
+ * on North Carolina.
  *
  * Geometry and interaction live in src/lib/flockView.ts. This file picks the
  * birds, sizes them, gives each one its drift, and draws the scaffolds;
- * flockView tells them where to stand via --gx…--gh and --tx…--th on #flock.
+ * flockView tells them where to stand via --gx…--gh, --bx…--bh, --rx/--ry/--rd
+ * and --tx…--th on #flock, and fills the axis strip with the day marks.
  */
 import Base from '../layouts/Base.astro';
 import BirdThumb from '../components/BirdThumb.astro';
@@ -95,9 +98,6 @@ const last = dates[dates.length - 1] ?? first;
 const daysOut = new Set(dates.map((d) => d.slice(0, 10))).size;
 const stats = `${spotted.length} species · ${locations.length} places · ${daysOut} days out`;
 
-const day = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
-const span = Math.max(1, day(last) - day(first));
-
 /* ---------------- how each one looks and drifts ---------------- */
 
 const DRIFTS = ['a', 'b', 'c', 'd'];
@@ -109,13 +109,15 @@ const field = flock.map((bird, i) => {
      size: the ten favourites fly closest, then the best-photographed. */
   const size = bird.favorite ? 100 : n >= 14 ? 80 : n >= 9 ? 62 : 46;
   const key = typeKey(bird.type);
-  const date = bird.firstSpotted ? (day(bird.firstSpotted) - day(first)) / span : 0.5;
+  /* the day, not a normalised fraction of the record: the When formation
+     gives every day out its own slot, so it needs to know which day */
+  const iso = /^\d{4}-\d{2}-\d{2}/.test(bird.firstSpotted ?? '') ? bird.firstSpotted!.slice(0, 10) : '';
   return {
     bird,
     size,
     english: splitName(bird.name).english,
     type: key === 'other' ? 9 : Number(key) - 1,
-    date: Math.max(0, Math.min(1, date)),
+    iso,
     rank: rankOf.get(bird.id) ?? i,
     drift: DRIFTS[i % DRIFTS.length],
     dur: 22 + ((i * 7) % 15),
@@ -146,11 +148,13 @@ const ways = [
      this data, so the line says what is: one of them. */
   { word: 'Where', href: withBase('/places'), form: 'map',
     hint: 'each bird flies to one of the places it was seen' },
-  /* "nearly half", not "most": summer 2025 holds 109 of the 238, which is
-     45.8% — a plurality. All the summers together are 126, but that is two
-     summers and not what the line says. */
+  /* The axis is one slot per day out, not a ruler, and the line has to say
+     so or the stretched summer is a lie by omission. "The wide middle is one
+     summer" is what the picture shows: 19 of the flock's 31 days, 34 of its
+     58 birds, are July–August 2025. (The record as a whole is 45.8% that
+     summer — a plurality; the old "nearly half" was that number.) */
   { word: 'When', href: withBase('/timeline'), form: 'timeline',
-    hint: 'each bird lands on the day it was first seen — nearly half of them in one summer' },
+    hint: 'each bird lands on the day it was first seen, one column per day out — the wide middle is one summer' },
   { word: 'Which', href: withBase('/groups'), form: 'groups',
     hint: 'nine kinds, sized by how many' },
   { word: 'All', href: withBase('/list'), form: 'list',
@@ -175,37 +179,19 @@ const ghostArt = usSvg
     'class="scaf-root" style="width:100%;height:100%;display:block"',
   );
 
-/* The Research Triangle ring — the same `inkRing`, the same seed 23, so the
-   home clump and the home patch on /places are literally one gesture.
+/* The Research Triangle ring — the same `inkRing`, the same seed 23, and
+   (since flockView sizes it to 3.1% of the map) the same radius, so the
+   home page and /places circle the Triangle with literally one gesture.
+   Drawn at r = 100 in its own viewBox; flockView scales the box to 2.32 r.
 
-   Drawn at r = 100 in its own viewBox rather than at the 3.1%-of-the-map
-   radius the real map uses: at country scale that ring is 34px across and
-   thirty-four birds sit on top of it, so the "same mark" would never be
-   seen. flockView sizes this one to the clump it circles. */
+   The birds are not inside it. Thirty-four home birds packed as photographs
+   on North Carolina were a clump wider than the state, half of it in the
+   Atlantic; they now sit in the dashed inset box /places uses for the same
+   purpose — "enlarged here" — with a pen leader from the ring. The box, its
+   label and the leader are placed by flockView, because they depend on the
+   window; the axis strip for When is likewise filled by flockView, since the
+   axis is one slot per day the *flock* has, and the phone flies fewer birds. */
 const ringPath = inkRing(0, 0, 100);
-
-/* When: month ticks and year numbers, positioned as a percentage of the
-   axis, which flockView stretches from `pad` to `W - pad` — the exact range
-   it maps the dates into, so tick and bird agree at any width. */
-const at = (ms: number) => Math.max(0, Math.min(1, (ms - day(first)) / span));
-const ticks: Array<{ t: number; jan: boolean }> = [];
-for (
-  let y = Number(first.slice(0, 4)), m = Number(first.slice(5, 7));
-  y * 12 + m <= Number(last.slice(0, 4)) * 12 + Number(last.slice(5, 7));
-
-) {
-  const ms = Date.UTC(y, m - 1, 1);
-  if (ms >= day(first) && ms <= day(last)) ticks.push({ t: at(ms), jan: m === 1 });
-  m += 1;
-  if (m > 12) {
-    m = 1;
-    y += 1;
-  }
-}
-const years: Array<{ y: number; t: number }> = [];
-for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
-  years.push({ y, t: at(Date.UTC(y, 0, 1)) });
-}
 ---
 
 <Base
@@ -221,15 +207,20 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     <svg class="scaf scaf--ink" aria-hidden="true" viewBox="-116 -116 232 232" preserveAspectRatio="xMidYMid meet">
       <path d={ringPath} />
     </svg>
+    {/* the home inset: the artwork's own dashed box, holding the home birds */}
+    <svg class="scaf scaf--box" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <rect x="1" y="1" width="98" height="98" rx="10" />
+    </svg>
+    <span class="scaf scaf__boxlbl" aria-hidden="true">The Triangle</span>
+    <svg class="scaf scaf--lead" aria-hidden="true" viewBox="0 0 1440 900" preserveAspectRatio="none">
+      <path class="scaf__shaft" d="" />
+      <path class="scaf__head" d="" />
+    </svg>
 
+    {/* the axis only; flockView adds the day, month and year marks for the
+        days the flock has (see markDays) */}
     <div class="scaf scaf--tl" aria-hidden="true">
       <div class="scaf__axis"></div>
-      {ticks.map((k) => (
-        <i class:list={['scaf__tick', { 'is-jan': k.jan }]} style={`left:${(k.t * 100).toFixed(3)}%`} />
-      ))}
-      {years.map((k) => (
-        <span class="scaf__year meta" style={`left:${(k.t * 100).toFixed(3)}%`}>{k.y}</span>
-      ))}
     </div>
 
     <div class="scaf scaf--groups" aria-hidden="true">
@@ -244,7 +235,7 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
           style={`--i:${f.rank};width:${f.size}px;height:${f.size}px`}
           data-size={f.size}
           data-type={f.type}
-          data-date={f.date.toFixed(4)}
+          data-iso={f.iso}
           data-rank={f.rank}
         >
           <div class="fb__y">
@@ -267,6 +258,11 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
         <p class="eyebrow">Birding checklist</p>
         <h1 class="display">Flock</h1>
         <p class="hub__stats meta">{stats}</p>
+        {/* Whose list. "Kept", not "completed": 43 frames on /list are still
+            empty and the page says so — a life list is a thing you keep. The
+            link is a personal homepage, external and absolute, so it does not
+            go through withBase(). Qin has no link until there is one to give. */}
+        <p class="hub__by">Kept by Qin and <a class="hub__by-link" href="https://yy-gx.github.io/">Yue</a>.</p>
         <ul class="ways">
           {ways.map((w) => (
             <li>
@@ -384,6 +380,50 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     vector-effect: non-scaling-stroke;
   }
 
+  /* The home inset. The same dashed box as the artwork's Hawaiʻi and Puerto
+     Rico insets (stroke 2, dash 7 6, rounded corners), its label in the
+     artwork's own 12.5-unit small caps — scaled with the map through --gs,
+     which flockView writes — and a pen leader from the ring. All three take
+     the ring's timing and ink, so the three marks arrive as one. */
+  .scaf--box {
+    left: var(--bx, 0px);
+    top: var(--by, 0px);
+    width: var(--bw, 0px);
+    height: var(--bh, 0px);
+    overflow: visible;
+  }
+  .scaf--box rect {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 2;
+    stroke-dasharray: 7 6;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+  }
+  .scaf__boxlbl {
+    font-family: var(--serif);
+    font-size: calc(12.5px * var(--gs, 1));
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--ink);
+  }
+  .scaf--lead {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .scaf--lead path {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+
   .scaf--tl {
     left: var(--tx, 0px);
     top: var(--ty, 0px);
@@ -407,7 +447,10 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     transition: transform 220ms var(--ease);
   }
 
-  .scaf__tick {
+  /* Everything below the axis is made at run time by flockView.markDays(),
+     so it carries no Astro scope attribute: these rules are :global inside
+     the scoped strip, or the marks would render as unstyled inline text. */
+  .scaf--tl :global(.scaf__tick) {
     position: absolute;
     top: 51px;
     width: 1px;
@@ -416,15 +459,36 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     opacity: 0;
     transition: opacity 120ms var(--ease);
   }
-  .scaf__tick.is-jan {
-    height: 12px;
+  .scaf--tl :global(.scaf__tick.is-jan) {
+    height: 14px;
     background: var(--rule);
   }
+  /* one under every column: the axis is a row of days, and this says so */
+  .scaf--tl :global(.scaf__day) {
+    position: absolute;
+    top: 51px;
+    width: 1px;
+    height: 3px;
+    background: var(--rule);
+    opacity: 0;
+    transition: opacity 120ms var(--ease);
+  }
+  /* the months that own a slot, named under their slots */
+  .scaf--tl :global(.scaf__mon) {
+    position: absolute;
+    top: 60px;
+    transform: translateX(-50%);
+    font: var(--fs-micro) / 1 var(--sans);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--ink-faint);
+    opacity: 0;
+    transition: opacity 120ms var(--ease);
+  }
 
-  /* 28px below the axis, not the 14 the sketch asked for: a bird sitting on
-     its true date has its disc bottom about 25px down, and the earliest
-     bird in the record is within a fortnight of the first year number. */
-  .scaf__year {
+  /* the years, under the January ticks, a line below the months */
+  .scaf--tl :global(.scaf__year) {
     position: absolute;
     top: 78px;
     transform: translateX(-50%);
@@ -433,8 +497,8 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     opacity: 0;
     transition: opacity 120ms var(--ease);
   }
-  /* 2024 sits at the very start of the axis; keep the numeral on the paper. */
-  .scaf__year:first-of-type { transform: translateX(-30%); }
+  /* the first year sits at the very start of the axis; keep it on the paper */
+  .scaf--tl :global(.scaf__year.is-first) { transform: translateX(0); }
 
   .scaf--groups {
     inset: 0;
@@ -465,8 +529,14 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     opacity: 0.16;
     transition: opacity 480ms var(--ease) 80ms;
   }
-  .flock:not(.flock--still)[data-form='map'] .scaf--ink {
-    opacity: 0.32;
+  /* the ring, the box, its label and the leader: one mark, one timing. 0.38
+     — darker than the coastline, because these three carry thirty-four
+     birds' worth of meaning and the coastline only has to be recognised. */
+  .flock:not(.flock--still)[data-form='map'] .scaf--ink,
+  .flock:not(.flock--still)[data-form='map'] .scaf--box,
+  .flock:not(.flock--still)[data-form='map'] .scaf__boxlbl,
+  .flock:not(.flock--still)[data-form='map'] .scaf--lead {
+    opacity: 0.38;
     transition: opacity 480ms var(--ease) 80ms;
   }
 
@@ -474,11 +544,13 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     transform: scaleX(1);
     transition: transform 520ms var(--ease) 80ms;
   }
-  .flock:not(.flock--still)[data-form='timeline'] .scaf__tick {
+  .flock:not(.flock--still)[data-form='timeline'] .scaf--tl :global(.scaf__tick),
+  .flock:not(.flock--still)[data-form='timeline'] .scaf--tl :global(.scaf__day) {
     opacity: 1;
     transition: opacity 250ms var(--ease) 300ms;
   }
-  .flock:not(.flock--still)[data-form='timeline'] .scaf__year {
+  .flock:not(.flock--still)[data-form='timeline'] .scaf--tl :global(.scaf__year),
+  .flock:not(.flock--still)[data-form='timeline'] .scaf--tl :global(.scaf__mon) {
     opacity: 1;
     transition: opacity 250ms var(--ease) 350ms;
   }
@@ -649,16 +721,39 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     color: var(--ink-soft);
   }
 
+  /* The byline: quieter than the stats line above it — small italic serif
+     in --ink-faint, the caption's voice rather than the label's — and the
+     one link on the hub takes the house idiom, a hairline under the word. */
+  .hub__by {
+    margin: 0.55rem 0 0;
+    font: italic var(--fs-small) / 1.3 var(--serif);
+    color: var(--ink-faint);
+  }
+  .hub__by-link {
+    pointer-events: auto;
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+    transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  }
+  .hub__by-link:hover,
+  .hub__by-link:focus-visible {
+    color: var(--ink-soft);
+    border-bottom-color: currentColor;
+  }
+
   /* While a word is held, the name and the numbers step back and the four
      words keep all the ink — you are choosing, not reading a masthead. */
   .hub .eyebrow,
   .hub .display,
-  .hub__stats {
+  .hub__stats,
+  .hub__by {
     transition: opacity 300ms var(--ease);
   }
   .flock[data-form] .hub .eyebrow,
   .flock[data-form] .hub .display,
-  .flock[data-form] .hub__stats {
+  .flock[data-form] .hub__stats,
+  .flock[data-form] .hub__by {
     opacity: 0.35;
   }
 
@@ -688,14 +783,31 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     transition: opacity 200ms var(--ease) 120ms;
   }
 
+  /* One hover region, not four. The row itself takes the pointer, so the
+     gaps between the words hold whichever word is nearer instead of
+     releasing the flock; and an absolutely positioned ::after hangs 44px
+     below it to take in the caption's band, where a pointer drifts while it
+     reads. Absolute, so the hub's box — which flockView measures for the
+     hole in the flock — does not grow by a pixel. flockView decides which
+     word is held from the pointer's x; release is leaving the row. */
   .ways {
+    position: relative;
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
     gap: clamp(1.1rem, 4vw, 2.6rem);
     margin: clamp(2rem, 5vh, 3.2rem) 0 0;
-    padding: 0;
+    padding: 0.35rem 0 0;
     list-style: none;
+    pointer-events: auto;
+  }
+  .ways::after {
+    content: '';
+    position: absolute;
+    left: -0.5rem;
+    right: -0.5rem;
+    top: 100%;
+    height: 44px;
   }
 
   .way {
@@ -730,10 +842,20 @@ for (let y = Number(first.slice(0, 4)); y <= Number(last.slice(0, 4)); y++) {
     transform-origin: 50% 50%;
     transition: transform var(--dur) var(--ease);
   }
+  /* the held word is lit whether the pointer is on its glyphs or in the gap
+     beside them — the row decides, and the word follows the row */
   .way:hover,
-  .way:focus-visible { color: var(--ink); }
+  .way:focus-visible,
+  .flock[data-form='map'] .way[data-form='map'],
+  .flock[data-form='timeline'] .way[data-form='timeline'],
+  .flock[data-form='groups'] .way[data-form='groups'],
+  .flock[data-form='list'] .way[data-form='list'] { color: var(--ink); }
   .way:hover::after,
-  .way:focus-visible::after { transform: scaleX(1); }
+  .way:focus-visible::after,
+  .flock[data-form='map'] .way[data-form='map']::after,
+  .flock[data-form='timeline'] .way[data-form='timeline']::after,
+  .flock[data-form='groups'] .way[data-form='groups']::after,
+  .flock[data-form='list'] .way[data-form='list']::after { transform: scaleX(1); }
 
   @media (max-width: 560px) {
     .fb__name { font-size: var(--fs-micro); }

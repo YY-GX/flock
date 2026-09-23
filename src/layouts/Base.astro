@@ -24,6 +24,7 @@ import { ClientRouter } from 'astro:transitions';
 import '../styles/global.css';
 import Compass from '../components/Compass.astro';
 import { stripBase, withBase } from '../lib/paths';
+import { GA_ID, gaEnabled } from '../lib/analytics';
 
 interface Props {
   title: string;
@@ -200,6 +201,60 @@ const buildSeason = seasonOfMonth(new Date().getMonth());
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImageUrl} />
     <meta name="twitter:image:alt" content={`${ogTitle} — a card from ${SITE_NAME}`} />
+
+    {/* Counting the 397 pages, once each. The whole explanation — where
+        PUBLIC_GA_ID goes, why the snippet Google hands out is wrong for a
+        <ClientRouter /> site, why the visitor's signal is honoured — is at
+        the top of src/lib/analytics.ts, and this repeats none of it. An Astro
+        comment rather than an HTML one so a build with analytics off ships
+        nothing at all, not even the note.
+
+        Three things to keep true here:
+
+        1. Unset means nothing is rendered, so `npm run dev` makes no request.
+        2. Once per document. No `data-astro-rerun`, so ClientRouter matches
+           this inline script against the arriving page's identical copy and
+           keeps the one that already ran; the `__ga` latch says so twice
+           over. The gtag.js element ClientRouter drops from the head on the
+           first swap has long since run — its globals live on `window`.
+        3. One page_view per page: `send_page_view: false` on the config, then
+           one event per `astro:page-load`, which fires on the initial load,
+           after every swap, and after back/forward — and fires *after* the
+           swap, so `document.title` and `location.href` belong to the page
+           that just arrived.
+
+        Inline for the same reason as the season script above: a module would
+        be deferred and bundled, and this has to be in place before
+        ClientRouter announces the first page. `define:vars` hands it the
+        measurement ID, already resolved. */}
+    {gaEnabled && (
+      <script is:inline define:vars={{ gaId: GA_ID }}>
+        (function () {
+          if (window.__ga) return;
+          if (navigator.doNotTrack === '1' || navigator.globalPrivacyControl === true) return;
+          window.__ga = true;
+
+          window.dataLayer = window.dataLayer || [];
+          function gtag() { window.dataLayer.push(arguments); }
+          window.gtag = gtag;
+
+          var s = document.createElement('script');
+          s.async = true;
+          s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(gaId);
+          document.head.appendChild(s);
+
+          gtag('js', new Date());
+          gtag('config', gaId, { send_page_view: false });
+
+          document.addEventListener('astro:page-load', function () {
+            gtag('event', 'page_view', {
+              page_location: location.href,
+              page_title: document.title,
+            });
+          });
+        })();
+      </script>
+    )}
 
     <!-- The flock re-forms instead of the page blinking. Browsers without
          View Transitions simply navigate; nothing here is load-bearing. -->
