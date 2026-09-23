@@ -298,11 +298,21 @@ export function createMapZoom(map: HTMLElement): MapZoom | null {
     panY = ty;
     moved = false;
     mode = 'pan';
-    try {
-      map.setPointerCapture(e.pointerId);
-    } catch {
-      /* already gone; the up handler still cleans up */
-    }
+    /*
+     * ⚠️ NO setPointerCapture HERE. It used to be taken on pointerdown, and
+     * capturing the pointer retargets every later pointer event — and the
+     * click the browser derives from them — at the element that captured it.
+     * So on an enlarged map a still, ordinary click on a pin was delivered to
+     * `.map` instead of to the pin's <a>, and nothing happened: the place's
+     * cards never opened. "放大后点击图片不显示bird card了 ... 准确的讲是不
+     * 显示哪个地方所有的卡片了." At 1x it worked, because `k <= 1` returns
+     * above and the capture was never taken.
+     *
+     * The capture is for a DRAG — keeping the pan alive when the pointer
+     * leaves the sheet — so it is taken in onMove at the moment the drag
+     * passes DRAG_SLOP, and a press that never travels that far stays the
+     * pin's own click.
+     */
   };
 
   const onMove = (e: PointerEvent) => {
@@ -329,7 +339,17 @@ export function createMapZoom(map: HTMLElement): MapZoom | null {
     if (mode === 'pan') {
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
-      if (!moved && Math.hypot(dx, dy) > DRAG_SLOP) moved = true;
+      if (!moved && Math.hypot(dx, dy) > DRAG_SLOP) {
+        moved = true;
+        /* now it is a drag, so hold the pointer: the pan must survive the
+           cursor leaving the sheet. See the note in onDown for why this is
+           not taken any earlier. */
+        try {
+          map.setPointerCapture(e.pointerId);
+        } catch {
+          /* already gone; endPointer still cleans up */
+        }
+      }
       if (!moved) return;
       map.setAttribute('data-panning', '');
       tx = panX + dx;
